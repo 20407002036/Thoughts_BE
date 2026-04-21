@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     supabase_jwt_audience: str = "authenticated"
     supabase_bucket: str = "journal-audio"
     supabase_journals_table: str = "journals"
+    supabase_profiles_table: str = "user_profiles"
     signed_url_expiry_seconds: int = 3600
 
     groq_api_key: Optional[str] = None
