@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
@@ -18,6 +19,13 @@ configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.app_name)
+app.add_middleware(
+	CORSMiddleware,
+	allow_origins=settings.cors_origins,
+	allow_credentials=settings.cors_allow_credentials,
+	allow_methods=settings.cors_methods,
+	allow_headers=settings.cors_headers,
+)
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(journals_router)
