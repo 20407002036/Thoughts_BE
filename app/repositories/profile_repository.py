@@ -39,8 +39,24 @@ class ProfileRepository:
                 self._local_profiles[user_id] = profile
             return profile
 
+        # Use an atomic upsert so concurrent first access cannot race on
+        # select-then-insert and fail with a duplicate key error.
         try:
             result = (
+                self._client.table(self._settings.supabase_profiles_table)
+                .upsert({"id": user_id}, on_conflict="id")
+                .execute()
+            )
+        except APIError as exc:
+            raise ProfileRepositoryError(f"Supabase profile upsert failed: {exc.message}") from exc
+
+        rows = result.data or []
+        if rows:
+            return rows[0]
+
+        # If the mutation response does not include the row, read it back.
+        try:
+            select_result = (
                 self._client.table(self._settings.supabase_profiles_table)
                 .select("*")
                 .eq("id", user_id)
@@ -50,24 +66,10 @@ class ProfileRepository:
         except APIError as exc:
             raise ProfileRepositoryError(f"Supabase profile select failed: {exc.message}") from exc
 
-        rows = result.data or []
-        if rows:
-            return rows[0]
-
-        # Ensure consistent behavior with local mode when no row exists yet.
-        try:
-            insert_result = (
-                self._client.table(self._settings.supabase_profiles_table)
-                .insert({"id": user_id})
-                .execute()
-            )
-        except APIError as exc:
-            raise ProfileRepositoryError(f"Supabase profile insert failed: {exc.message}") from exc
-
-        inserted_rows = insert_result.data or []
-        if not inserted_rows:
-            raise ProfileRepositoryError("Supabase profile insert returned no row")
-        return inserted_rows[0]
+        selected_rows = select_result.data or []
+        if not selected_rows:
+            raise ProfileRepositoryError("Supabase profile upsert returned no row")
+        return selected_rows[0]
 
     def update_display_name(self, user_id: str, display_name: str) -> dict[str, Any]:
         if self._client is None:
@@ -80,28 +82,13 @@ class ProfileRepository:
         try:
             result = (
                 self._client.table(self._settings.supabase_profiles_table)
-                .update({"display_name": display_name})
-                .eq("id", user_id)
+                .upsert({"id": user_id, "display_name": display_name}, on_conflict="id")
                 .execute()
             )
         except APIError as exc:
-            raise ProfileRepositoryError(f"Supabase profile update failed: {exc.message}") from exc
+            raise ProfileRepositoryError(f"Supabase profile upsert failed: {exc.message}") from exc
 
         rows = result.data or []
-        if rows:
-            return rows[0]
-
-        # Backfill row if a trigger has not materialized profile yet.
-        try:
-            insert_result = (
-                self._client.table(self._settings.supabase_profiles_table)
-                .insert({"id": user_id, "display_name": display_name})
-                .execute()
-            )
-        except APIError as exc:
-            raise ProfileRepositoryError(f"Supabase profile upsert fallback failed: {exc.message}") from exc
-
-        inserted_rows = insert_result.data or []
-        if not inserted_rows:
-            raise ProfileRepositoryError("Supabase profile upsert fallback returned no row")
-        return inserted_rows[0]
+        if not rows:
+            raise ProfileRepositoryError("Supabase profile upsert returned no row")
+        return rows[0]
