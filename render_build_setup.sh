@@ -11,9 +11,9 @@
 # export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 # echo "Using Cargo home at ${CARGO_HOME}"
-# echo "PyO3 ABI3 forward compatibility enabled"
-echo "Upgrading pip tooling and installing Python dependencies..."
-python -m pip install --upgrade pip setuptools wheel
+# # echo "PyO3 ABI3 forward compatibility enabled"
+# echo "Upgrading pip tooling and installing Python dependencies..."
+# python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
 
 echo "Build script finished."
