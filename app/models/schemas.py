@@ -72,3 +72,17 @@ class RefreshTokenResponse(BaseModel):
 
 class LogoutResponse(BaseModel):
     success: bool
+
+
+class ProfileResponse(BaseModel):
+    user_id: str
+    email: str | None = None
+    display_name: str | None = None
+    streak_count: int = 0
+    last_journal_saved: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class UpdateProfileRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=100)

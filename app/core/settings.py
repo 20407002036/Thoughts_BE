@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     supabase_jwt_audience: str = "authenticated"
     supabase_bucket: str = "journal-audio"
     supabase_journals_table: str = "journals"
+    supabase_profiles_table: str = "user_profiles"
     signed_url_expiry_seconds: int = 3600
 
     groq_api_key: Optional[str] = None
@@ -29,6 +30,10 @@ class Settings(BaseSettings):
     max_upload_mb: int = 12
     request_timeout_seconds: int = 30
     analysis_prompt_version: str = "v1"
+    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+    cors_allow_credentials: bool = True
+    cors_allow_methods: str = "*"
+    cors_allow_headers: str = "*"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 
@@ -43,6 +48,18 @@ class Settings(BaseSettings):
         if not self.supabase_url:
             return None
         return f"{self.supabase_url.rstrip('/')}/auth/v1"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allow_origins.split(",") if origin.strip()]
+
+    @property
+    def cors_methods(self) -> list[str]:
+        return [method.strip() for method in self.cors_allow_methods.split(",") if method.strip()]
+
+    @property
+    def cors_headers(self) -> list[str]:
+        return [header.strip() for header in self.cors_allow_headers.split(",") if header.strip()]
 
 
 @lru_cache

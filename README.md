@@ -50,6 +50,7 @@ This service accepts journal audio uploads and runs a full pipeline:
 | SUPABASE_JWT_AUDIENCE | no | JWT audience validation target |
 | SUPABASE_BUCKET | no | Storage bucket for audio uploads |
 | SUPABASE_JOURNALS_TABLE | no | Journal table name |
+| SUPABASE_PROFILES_TABLE | no | Profile table name |
 | SIGNED_URL_EXPIRY_SECONDS | no | Signed URL TTL |
 | GROQ_API_KEY | prod | Groq API key |
 | GROQ_WHISPER_MODEL | no | Whisper model name |
@@ -103,6 +104,27 @@ Request:
 - Field: audio (required UploadFile, must be audio/*)
 - Header: Authorization: Bearer <access-token> when AUTH_REQUIRED=true
 - Optional header: X-Correlation-ID
+
+Success response shape:
+
+```json
+{
+  "id": "entry-uuid",
+  "user_id": "user-uuid",
+  "transcript": "Today I felt focused.",
+  "analysis": {
+    "mood": "calm",
+    "title": "Steady Day",
+    "summary": "A calm and focused day.",
+    "themes": ["balance"],
+    "insights": ["Breathing helped reset focus."]
+  },
+  "audio_path": "user-uuid/asset.mp3",
+  "audio_signed_url": "https://...",
+  "prompt_version": "v1",
+  "created_at": "2026-04-15T00:00:00Z"
+}
+```
 
 ### POST /v1/auth/login
 
@@ -200,24 +222,56 @@ Success response shape:
 }
 ```
 
+### GET /v1/profile
+
+Returns the current authenticated user's profile.
+
+Request:
+
+- Header: Authorization: Bearer <access-token> when AUTH_REQUIRED=true
+
 Success response shape:
 
 ```json
 {
-  "id": "entry-uuid",
   "user_id": "user-uuid",
-  "transcript": "Today I felt focused.",
-  "analysis": {
-    "mood": "calm",
-    "title": "Steady Day",
-    "summary": "A calm and focused day.",
-    "themes": ["balance"],
-    "insights": ["Breathing helped reset focus."]
-  },
-  "audio_path": "user-uuid/asset.mp3",
-  "audio_signed_url": "https://...",
-  "prompt_version": "v1",
-  "created_at": "2026-04-15T00:00:00Z"
+  "email": "user@example.com",
+  "display_name": "Calm Mind",
+  "streak_count": 2,
+  "last_journal_saved": "2026-04-21T00:00:00Z",
+  "created_at": "2026-04-20T00:00:00Z",
+  "updated_at": "2026-04-21T00:00:00Z"
+}
+```
+
+### PATCH /v1/profile
+
+Updates the current authenticated user's profile display name.
+
+Request:
+
+- Header: Authorization: Bearer <access-token> when AUTH_REQUIRED=true
+- Content-Type: application/json
+
+Request body:
+
+```json
+{
+  "display_name": "New Display Name"
+}
+```
+
+Success response shape:
+
+```json
+{
+  "user_id": "user-uuid",
+  "email": "user@example.com",
+  "display_name": "New Display Name",
+  "streak_count": 2,
+  "last_journal_saved": "2026-04-21T00:00:00Z",
+  "created_at": "2026-04-20T00:00:00Z",
+  "updated_at": "2026-04-21T00:00:00Z"
 }
 ```
 
@@ -293,6 +347,22 @@ Logout session:
 ```bash
 curl -s -X POST "http://127.0.0.1:8000/v1/auth/logout" \
   -H "Authorization: Bearer <supabase-access-token>"
+```
+
+Get current profile:
+
+```bash
+curl -s "http://127.0.0.1:8000/v1/profile" \
+  -H "Authorization: Bearer <supabase-access-token>"
+```
+
+Update display name:
+
+```bash
+curl -s -X PATCH "http://127.0.0.1:8000/v1/profile" \
+  -H "Authorization: Bearer <supabase-access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"display_name":"New Display Name"}'
 ```
 
 Ingest audio in local-dev mode (AUTH_REQUIRED=false):
