@@ -80,28 +80,13 @@ class ProfileRepository:
         try:
             result = (
                 self._client.table(self._settings.supabase_profiles_table)
-                .update({"display_name": display_name})
-                .eq("id", user_id)
+                .upsert({"id": user_id, "display_name": display_name}, on_conflict="id")
                 .execute()
             )
         except APIError as exc:
-            raise ProfileRepositoryError(f"Supabase profile update failed: {exc.message}") from exc
+            raise ProfileRepositoryError(f"Supabase profile upsert failed: {exc.message}") from exc
 
         rows = result.data or []
-        if rows:
-            return rows[0]
-
-        # Backfill row if a trigger has not materialized profile yet.
-        try:
-            insert_result = (
-                self._client.table(self._settings.supabase_profiles_table)
-                .insert({"id": user_id, "display_name": display_name})
-                .execute()
-            )
-        except APIError as exc:
-            raise ProfileRepositoryError(f"Supabase profile upsert fallback failed: {exc.message}") from exc
-
-        inserted_rows = insert_result.data or []
-        if not inserted_rows:
-            raise ProfileRepositoryError("Supabase profile upsert fallback returned no row")
-        return inserted_rows[0]
+        if not rows:
+            raise ProfileRepositoryError("Supabase profile upsert returned no row")
+        return rows[0]
