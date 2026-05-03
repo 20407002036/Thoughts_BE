@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.repositories.profile_repository import ProfileRepository, ProfileRepositoryError
+from app.repositories.profile_repository import ProfileRepository
 
 
 class ProfileValidationError(RuntimeError):
