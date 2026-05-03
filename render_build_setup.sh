@@ -14,7 +14,7 @@
 # # echo "PyO3 ABI3 forward compatibility enabled"
 # echo "Upgrading pip tooling and installing Python dependencies..."
 # python -m pip install --upgrade pip setuptools wheel
-python -m venv venv && source venv/bin/activate
+# python -m venv venv && source venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
