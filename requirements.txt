@@ -10,3 +10,4 @@ cryptography==43.0.3
 supabase==2.7.4
 groq==0.11.0
 gunicorn
+pydantic-settings==2.5.2
