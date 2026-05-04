@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from uuid import uuid4
 
@@ -8,9 +7,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
+from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
-from app.api.journals import router as journals_router
+from app.api.journals import entries_router, router as journals_router
+from app.api.preferences import router as preferences_router
 from app.api.profile import router as profile_router
+from app.api.recordings import router as recordings_router
 from app.core.logging import configure_logging, get_correlation_id, set_correlation_id
 from app.core.settings import get_settings
 
@@ -29,7 +31,11 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(journals_router)
+app.include_router(entries_router)
+app.include_router(recordings_router)
 app.include_router(profile_router)
+app.include_router(preferences_router)
+app.include_router(dashboard_router)
 
 
 def _error_payload(error: str, message: str) -> dict[str, str]:
@@ -83,22 +89,7 @@ async def request_middleware(request: Request, call_next):
 			"method": request.method,
 		},
 	)
-	try:
-		response = await asyncio.wait_for(call_next(request), timeout=settings.request_timeout_seconds)
-	except TimeoutError:
-		logger.warning(
-			"request_timeout",
-			extra={
-				"path": request.url.path,
-				"method": request.method,
-				"timeout_seconds": settings.request_timeout_seconds,
-			},
-		)
-		return _error_response(
-			status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-			error="request_timeout",
-			message="Request timed out",
-		)
+	response = await call_next(request)
 
 	response.headers["X-Correlation-ID"] = correlation_id
 	logger.info(
@@ -128,6 +119,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 		status.HTTP_422_UNPROCESSABLE_ENTITY: "validation_error",
 		status.HTTP_502_BAD_GATEWAY: "upstream_error",
 		status.HTTP_504_GATEWAY_TIMEOUT: "request_timeout",
+		status.HTTP_501_NOT_IMPLEMENTED: "unsupported",
 		status.HTTP_500_INTERNAL_SERVER_ERROR: "internal_error",
 	}.get(exc.status_code, "http_error")
 

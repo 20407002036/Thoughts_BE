@@ -12,9 +12,13 @@ router = APIRouter(prefix="/v1/profile", tags=["profile"])
 
 
 @lru_cache
+def _build_profile_repository() -> ProfileRepository:
+    return ProfileRepository(settings=get_settings())
+
+
+@lru_cache
 def _build_profile_service() -> ProfileService:
-    settings = get_settings()
-    return ProfileService(profile_repository=ProfileRepository(settings=settings))
+    return ProfileService(profile_repository=_build_profile_repository())
 
 
 def get_profile_service(settings: Settings = Depends(get_settings)) -> ProfileService:

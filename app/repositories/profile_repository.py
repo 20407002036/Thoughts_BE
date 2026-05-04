@@ -25,8 +25,17 @@ class ProfileRepository:
         return {
             "id": user_id,
             "display_name": None,
+            "avatar_url": None,
+            "timezone": "UTC",
+            "tagline": None,
             "streak_count": 0,
             "last_journal_saved": None,
+            "notifications_enabled": True,
+            "prompt_reminder_time": None,
+            "appearance_mode": "system",
+            "audio_quality": "standard",
+            "language": "en",
+            "encryption_status": "managed",
             "created_at": now,
             "updated_at": now,
         }
@@ -92,3 +101,49 @@ class ProfileRepository:
         if not rows:
             raise ProfileRepositoryError("Supabase profile upsert returned no row")
         return rows[0]
+
+    def get_preferences(self, user_id: str) -> dict[str, Any]:
+        profile = self.get_profile(user_id=user_id)
+        return self._preferences_from_profile(profile)
+
+    def update_preferences(self, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "notifications_enabled",
+            "prompt_reminder_time",
+            "appearance_mode",
+            "audio_quality",
+            "language",
+        }
+        update_payload = {key: value for key, value in payload.items() if key in allowed}
+
+        if self._client is None:
+            profile = self._local_profiles.get(user_id) or self._default_profile(user_id)
+            profile.update(update_payload)
+            profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._local_profiles[user_id] = profile
+            return self._preferences_from_profile(profile)
+
+        try:
+            result = (
+                self._client.table(self._settings.supabase_profiles_table)
+                .upsert({"id": user_id, **update_payload}, on_conflict="id")
+                .execute()
+            )
+        except APIError as exc:
+            raise ProfileRepositoryError(f"Supabase preferences upsert failed: {exc.message}") from exc
+
+        rows = result.data or []
+        if not rows:
+            raise ProfileRepositoryError("Supabase preferences upsert returned no row")
+        return self._preferences_from_profile(rows[0])
+
+    @staticmethod
+    def _preferences_from_profile(profile: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "notifications_enabled": profile.get("notifications_enabled", True),
+            "prompt_reminder_time": profile.get("prompt_reminder_time"),
+            "appearance_mode": profile.get("appearance_mode") or "system",
+            "audio_quality": profile.get("audio_quality") or "standard",
+            "language": profile.get("language") or "en",
+            "encryption_status": profile.get("encryption_status") or "managed",
+        }
