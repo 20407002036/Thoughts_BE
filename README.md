@@ -33,6 +33,12 @@ This service accepts journal audio uploads and runs a full pipeline:
    uvicorn app.main:app --reload
    ```
 
+## Render deployment
+
+- Build Command: `bash render_build_setup.sh`
+- Start Command: `bash render_start.sh`
+- Runtime: `runtime.txt` pins Python 3.13.0 so `pydantic-core` and PyO3 stay compatible.
+
 ## Environment variables
 
 | Variable | Required | Description |
@@ -125,6 +131,124 @@ Success response shape:
   "created_at": "2026-04-15T00:00:00Z"
 }
 ```
+
+### GET /v1/entries
+
+Returns paginated journal summaries. `/v1/journals` is also supported as an alias.
+
+Query parameters:
+
+- `limit` 1-100, default 20
+- `offset` default 0
+- `month` optional `YYYY-MM`
+- `query` optional text search
+- `tag` optional theme/tag filter
+
+Success response shape:
+
+```json
+{
+  "entries": [
+    {
+      "id": "entry-uuid",
+      "entry_id": "entry-uuid",
+      "title": "Steady Day",
+      "created_at": "2026-05-04T08:00:00Z",
+      "summary": "A calm and focused day.",
+      "status": "completed",
+      "mood_label": "calm"
+    }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "total": 1
+}
+```
+
+### GET /v1/entries/{entryId}
+
+Returns journal detail. `/v1/journals/{entryId}` is also supported as an alias.
+
+Success response shape:
+
+```json
+{
+  "id": "entry-uuid",
+  "recording_session_id": null,
+  "title": "Steady Day",
+  "created_at": "2026-05-04T08:00:00Z",
+  "recorded_at": "2026-05-04T08:00:00Z",
+  "transcript": {
+    "full_text": "Today I felt focused."
+  },
+  "tags": [
+    {
+      "label": "balance",
+      "source": "analysis"
+    }
+  ],
+  "mood_analysis": {
+    "label": "calm",
+    "score": null,
+    "confidence": null,
+    "explanation": null
+  },
+  "takeaway": "A calm and focused day.",
+  "summary": "A calm and focused day.",
+  "highlights": ["Breathing helped reset focus."],
+  "audio_path": "user-uuid/asset.mp3",
+  "audio_signed_url": "https://...",
+  "prompt_version": "v1"
+}
+```
+
+### PATCH /v1/entries/{entryId}
+
+Updates editable journal fields. `/v1/journals/{entryId}` is also supported as an alias.
+
+Request body:
+
+```json
+{
+  "title": "Updated title",
+  "summary": "Updated summary",
+  "tags": ["calm", "reflection"]
+}
+```
+
+### POST /v1/entries/{entryId}/export
+
+Export is not supported in this phase. The endpoint returns `501 unsupported` with the standard error envelope so clients can disable export cleanly.
+
+### POST /v1/entries/{entryId}/share
+
+Share-link generation is not supported in this phase. The endpoint returns `501 unsupported` with the standard error envelope so clients can disable sharing cleanly.
+
+### POST /v1/recordings
+
+Creates a recording upload using the current synchronous ingest pipeline. Because processing completes in the request for this MVP, successful responses return `completed` with `progress_percent: 100`.
+
+Request:
+
+- Content-Type: multipart/form-data
+- Field: audio (required UploadFile, must be audio/*)
+
+Success response shape:
+
+```json
+{
+  "recording_id": "entry-uuid",
+  "status": "completed",
+  "progress_percent": 100,
+  "error_message": null,
+  "entry_id": "entry-uuid",
+  "draft_id": null
+}
+```
+
+### GET /v1/recordings/{recordingId}
+
+Returns recording state. In the current synchronous implementation, existing recordings resolve to `completed` and use the journal entry id as the recording id.
 
 ### POST /v1/auth/login
 
@@ -275,6 +399,55 @@ Success response shape:
 }
 ```
 
+### GET /v1/preferences
+
+Returns user preferences.
+
+Success response shape:
+
+```json
+{
+  "notifications_enabled": true,
+  "prompt_reminder_time": null,
+  "appearance_mode": "system",
+  "audio_quality": "standard",
+  "language": "en",
+  "encryption_status": "managed"
+}
+```
+
+### PATCH /v1/preferences
+
+Updates user preferences.
+
+Request body:
+
+```json
+{
+  "notifications_enabled": false,
+  "prompt_reminder_time": "08:30",
+  "appearance_mode": "dark",
+  "audio_quality": "high",
+  "language": "en"
+}
+```
+
+### GET /v1/dashboard
+
+Returns dashboard summary data. Prompt generation is not implemented yet, so the response deliberately returns `prompt: null` and `prompt_status: unavailable` instead of placeholder copy.
+
+Success response shape:
+
+```json
+{
+  "prompt": null,
+  "prompt_status": "unavailable",
+  "recent_entries": [],
+  "streak_count": 0,
+  "entry_count": 0
+}
+```
+
 Error envelope for all handled failures:
 
 ```json
@@ -293,6 +466,7 @@ Common error codes:
 - 422 validation_error
 - 502 upstream_error
 - 504 request_timeout
+- 501 unsupported
 - 500 internal_error
 
 ## cURL examples
