@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
 
 from app.core.security import AuthenticatedUser, get_current_user
 from app.core.settings import Settings, get_settings
@@ -16,6 +16,7 @@ from app.repositories.journal_repository import JournalRepository, JournalReposi
 from app.services.analysis_service import AnalysisError, AnalysisService
 from app.services.journal_service import JournalNotFoundError, JournalService, JournalValidationError
 from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError
+from app.services.live_transcription_service import LiveTranscriptionError, LiveTranscriptionService
 from app.services.storage_service import StorageService
 from app.services.transcription_service import TranscriptionError, TranscriptionService
 
@@ -216,6 +217,91 @@ def export_journal_entry(entry_id: str, current_user: AuthenticatedUser = Depend
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="Journal export is not supported yet",
     )
+
+
+@router.websocket("/live-transcribe")
+async def live_transcribe_websocket(
+    websocket: WebSocket,
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """
+    WebSocket endpoint for real-time audio transcription using Vosk.
+
+    Protocol:
+    1. Client sends binary audio chunks (16-bit PCM, 16kHz recommended)
+    2. Server responds with JSON for each chunk:
+       {"partial": "text...", "final": null, "is_final": false}  # During transcription
+       {"partial": null, "final": "complete text", "is_final": true}  # When phrase complete
+    3. Client can send {"action": "stop"} to end session and get final result
+    """
+    try:
+        await websocket.accept()
+
+        # Initialize transcription service
+        try:
+            service = LiveTranscriptionService(settings)
+            recognizer = service.create_recognizer()
+        except LiveTranscriptionError as exc:
+            await websocket.send_json({"error": str(exc), "code": "init_failed"})
+            await websocket.close(code=1008, reason="Failed to initialize transcription")
+            return
+
+        try:
+            while True:
+                # Receive data from client
+                data = await websocket.receive()
+
+                # Handle text messages (control commands)
+                if "text" in data:
+                    message = data["text"]
+                    if message == "stop" or message == '{"action": "stop"}':
+                        # End session and return final result
+                        final_text = service.get_final_result(recognizer)
+                        await websocket.send_json({
+                            "final": final_text,
+                            "is_final": True,
+                            "session_ended": True,
+                        })
+                        break
+                    continue
+
+                # Handle binary audio chunks
+                if "bytes" in data:
+                    audio_chunk = data["bytes"]
+                    try:
+                        result = LiveTranscriptionService.process_chunk(recognizer, audio_chunk)
+                        await websocket.send_json(result)
+                    except LiveTranscriptionError as exc:
+                        await websocket.send_json({
+                            "error": str(exc),
+                            "code": "process_failed",
+                        })
+                        break
+
+        except WebSocketDisconnect:
+            pass  # Client disconnected
+        except Exception as exc:
+            import logging
+            logging.exception("Unexpected error in live transcription websocket")
+            try:
+                await websocket.send_json({
+                    "error": "An unexpected error occurred",
+                    "code": "internal_error",
+                })
+            except Exception:
+                pass  # Already disconnected or sending failed
+            finally:
+                await websocket.close(code=1011, reason="Internal server error")
+
+    except Exception as exc:
+        import logging
+        logging.exception("WebSocket connection error")
+        try:
+            await websocket.close(code=1011, reason="Connection error")
+        except Exception:
+            pass
+
+
 
 
 @router.post("/{entry_id}/share", response_model=UnsupportedActionResponse)

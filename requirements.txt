@@ -1,3 +1,9 @@
+# NOTE: pydantic v2 uses a Rust-backed core library (pydantic-core).
+# For Render / production deployment:
+# 1. Add `runtime.txt` with "python-3.13.0" (PyO3 support; Python 3.14+ requires stable ABI).
+# 2. Set build command to: bash render_build_setup.sh
+# See RENDER_BUILD.md for details.
+
 fastapi==0.115.2
 uvicorn[standard]==0.31.1
 pydantic==2.9.2
@@ -9,3 +15,6 @@ PyJWT==2.9.0
 cryptography==43.0.3
 supabase==2.7.4
 groq==0.11.0
+vosk==0.3.45
+websockets==14.1
+gunicorn

@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     groq_whisper_model: str = "whisper-large-v3"
     groq_llm_model: str = "llama-3.3-70b-versatile"
 
+    vosk_model_path: Optional[str] = None
+
     max_upload_mb: int = 12
     request_timeout_seconds: int = 30
     analysis_prompt_version: str = "v1"
