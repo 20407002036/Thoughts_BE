@@ -235,7 +235,8 @@ async def live_transcribe_websocket(
     3. Client can send {"action": "stop"} to end session and get final result
     """
     try:
-        get_current_user(credentials=await bearer_scheme(websocket), settings=settings)
+        authenticated_user = get_current_user(credentials=await bearer_scheme(websocket), settings=settings)
+        websocket.state.user_id = authenticated_user.user_id
         await websocket.accept()
 
         # Initialize transcription service
@@ -294,8 +295,9 @@ async def live_transcribe_websocket(
             finally:
                 await websocket.close(code=1011, reason="Internal server error")
 
-    except HTTPException:
-        await websocket.close(code=1008, reason="Authentication required")
+    except HTTPException as exc:
+        reason = str(exc.detail) if exc.detail else "Authentication required"
+        await websocket.close(code=1008, reason=reason[:123])
     except Exception as exc:
         import logging
         logging.exception("WebSocket connection error")
