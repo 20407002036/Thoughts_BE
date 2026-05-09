@@ -2,7 +2,7 @@ from functools import lru_cache
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
 
-from app.core.security import AuthenticatedUser, get_current_user
+from app.core.security import AuthenticatedUser, bearer_scheme, get_current_user
 from app.core.settings import Settings, get_settings
 from app.models.schemas import (
     ErrorResponse,
@@ -235,6 +235,7 @@ async def live_transcribe_websocket(
     3. Client can send {"action": "stop"} to end session and get final result
     """
     try:
+        get_current_user(credentials=await bearer_scheme(websocket), settings=settings)
         await websocket.accept()
 
         # Initialize transcription service
@@ -293,6 +294,8 @@ async def live_transcribe_websocket(
             finally:
                 await websocket.close(code=1011, reason="Internal server error")
 
+    except HTTPException:
+        await websocket.close(code=1008, reason="Unauthorized")
     except Exception as exc:
         import logging
         logging.exception("WebSocket connection error")
