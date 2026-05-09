@@ -6,7 +6,7 @@ from app.core.settings import get_settings
 from app.main import app
 
 
-def test_live_transcribe_websocket_requires_bearer_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_live_transcribe_websocket_rejects_missing_bearer_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTH_REQUIRED", "true")
     get_settings.cache_clear()
 
