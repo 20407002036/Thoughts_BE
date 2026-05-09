@@ -24,6 +24,7 @@ from app.services.transcription_service import TranscriptionError, Transcription
 router = APIRouter(prefix="/v1/journals", tags=["journals"])
 entries_router = APIRouter(prefix="/v1/entries", tags=["entries"])
 logger = logging.getLogger(__name__)
+MAX_WS_CLOSE_REASON_LEN = 123
 
 
 @lru_cache
@@ -239,75 +240,75 @@ async def live_transcribe_websocket(
     try:
         authenticated_user = get_current_user(credentials=await bearer_scheme(websocket), settings=settings)
         websocket.state.user_id = authenticated_user.user_id
-        await websocket.accept()
-
-        # Initialize transcription service
-        try:
-            service = LiveTranscriptionService(settings)
-            recognizer = service.create_recognizer()
-        except LiveTranscriptionError as exc:
-            await websocket.send_json({"error": str(exc), "code": "init_failed"})
-            await websocket.close(code=1008, reason="Failed to initialize transcription")
-            return
-
-        try:
-            while True:
-                # Receive data from client
-                data = await websocket.receive()
-
-                # Handle text messages (control commands)
-                if "text" in data:
-                    message = data["text"]
-                    if message == "stop" or message == '{"action": "stop"}':
-                        # End session and return final result
-                        final_text = service.get_final_result(recognizer)
-                        await websocket.send_json({
-                            "final": final_text,
-                            "is_final": True,
-                            "session_ended": True,
-                        })
-                        break
-                    continue
-
-                # Handle binary audio chunks
-                if "bytes" in data:
-                    audio_chunk = data["bytes"]
-                    try:
-                        result = LiveTranscriptionService.process_chunk(recognizer, audio_chunk)
-                        await websocket.send_json(result)
-                    except LiveTranscriptionError as exc:
-                        await websocket.send_json({
-                            "error": str(exc),
-                            "code": "process_failed",
-                        })
-                        break
-
-        except WebSocketDisconnect:
-            pass  # Client disconnected
-        except Exception as exc:
-            import logging
-            logging.exception("Unexpected error in live transcription websocket")
-            try:
-                await websocket.send_json({
-                    "error": "An unexpected error occurred",
-                    "code": "internal_error",
-                })
-            except Exception:
-                pass  # Already disconnected or sending failed
-            finally:
-                await websocket.close(code=1011, reason="Internal server error")
-
     except HTTPException as exc:
         logger.warning("WebSocket auth rejected: status=%s detail=%s", exc.status_code, exc.detail)
         reason = str(exc.detail) if exc.detail else "Request rejected"
-        await websocket.close(code=1008, reason=reason[:123])
-    except Exception as exc:
-        import logging
-        logging.exception("WebSocket connection error")
+        await websocket.close(code=1008, reason=reason[:MAX_WS_CLOSE_REASON_LEN])
+        return
+    except Exception:
+        logger.exception("WebSocket connection error")
         try:
             await websocket.close(code=1011, reason="Connection error")
         except Exception:
             pass
+        return
+
+    await websocket.accept()
+
+    # Initialize transcription service
+    try:
+        service = LiveTranscriptionService(settings)
+        recognizer = service.create_recognizer()
+    except LiveTranscriptionError as exc:
+        await websocket.send_json({"error": str(exc), "code": "init_failed"})
+        await websocket.close(code=1008, reason="Failed to initialize transcription")
+        return
+
+    try:
+        while True:
+            # Receive data from client
+            data = await websocket.receive()
+
+            # Handle text messages (control commands)
+            if "text" in data:
+                message = data["text"]
+                if message == "stop" or message == '{"action": "stop"}':
+                    # End session and return final result
+                    final_text = service.get_final_result(recognizer)
+                    await websocket.send_json({
+                        "final": final_text,
+                        "is_final": True,
+                        "session_ended": True,
+                    })
+                    break
+                continue
+
+            # Handle binary audio chunks
+            if "bytes" in data:
+                audio_chunk = data["bytes"]
+                try:
+                    result = LiveTranscriptionService.process_chunk(recognizer, audio_chunk)
+                    await websocket.send_json(result)
+                except LiveTranscriptionError as exc:
+                    await websocket.send_json({
+                        "error": str(exc),
+                        "code": "process_failed",
+                    })
+                    break
+
+    except WebSocketDisconnect:
+        pass  # Client disconnected
+    except Exception:
+        logger.exception("Unexpected error in live transcription websocket")
+        try:
+            await websocket.send_json({
+                "error": "An unexpected error occurred",
+                "code": "internal_error",
+            })
+        except Exception:
+            pass  # Already disconnected or sending failed
+        finally:
+            await websocket.close(code=1011, reason="Internal server error")
 
 
 
