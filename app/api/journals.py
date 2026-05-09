@@ -24,6 +24,7 @@ from app.services.transcription_service import TranscriptionError, Transcription
 router = APIRouter(prefix="/v1/journals", tags=["journals"])
 entries_router = APIRouter(prefix="/v1/entries", tags=["entries"])
 logger = logging.getLogger(__name__)
+# RFC 6455 limits websocket close reason payload to 123 bytes.
 MAX_WS_CLOSE_REASON_LEN = 123
 
 
