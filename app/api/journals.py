@@ -235,8 +235,7 @@ async def live_transcribe_websocket(
     3. Client can send {"action": "stop"} to end session and get final result
     """
     try:
-        current_user = get_current_user(credentials=await bearer_scheme(websocket), settings=settings)
-        _ = current_user
+        get_current_user(credentials=await bearer_scheme(websocket), settings=settings)
         await websocket.accept()
 
         # Initialize transcription service
