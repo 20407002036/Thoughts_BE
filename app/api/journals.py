@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
@@ -22,6 +23,7 @@ from app.services.transcription_service import TranscriptionError, Transcription
 
 router = APIRouter(prefix="/v1/journals", tags=["journals"])
 entries_router = APIRouter(prefix="/v1/entries", tags=["entries"])
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -296,7 +298,8 @@ async def live_transcribe_websocket(
                 await websocket.close(code=1011, reason="Internal server error")
 
     except HTTPException as exc:
-        reason = str(exc.detail) if exc.detail else "Authentication required"
+        logger.warning("WebSocket auth rejected: status=%s detail=%s", exc.status_code, exc.detail)
+        reason = str(exc.detail) if exc.detail else "Request rejected"
         await websocket.close(code=1008, reason=reason[:123])
     except Exception as exc:
         import logging
