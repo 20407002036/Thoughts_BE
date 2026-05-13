@@ -1,4 +1,5 @@
 import logging
+import json
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
@@ -272,8 +273,16 @@ async def live_transcribe_websocket(
 
             # Handle text messages (control commands)
             if "text" in data:
-                message = data["text"]
-                if message == "stop" or message == '{"action": "stop"}':
+                message = data["text"].strip()
+                should_stop = message == "stop"
+                if not should_stop:
+                    try:
+                        control_payload = json.loads(message)
+                    except json.JSONDecodeError:
+                        control_payload = None
+                    should_stop = isinstance(control_payload, dict) and control_payload.get("action") == "stop"
+
+                if should_stop:
                     # End session and return final result
                     final_text = service.get_final_result(recognizer)
                     await websocket.send_json({
