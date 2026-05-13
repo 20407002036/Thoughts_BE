@@ -24,18 +24,16 @@ def test_live_transcribe_websocket_rejects_missing_bearer_token(monkeypatch: pyt
 def test_live_transcribe_websocket_accepts_json_stop_command(monkeypatch: pytest.MonkeyPatch) -> None:
     class DummyLiveTranscriptionService:
         def __init__(self, settings):
-            _ = settings
+            pass
 
         def create_recognizer(self):
             return object()
 
         def get_final_result(self, recognizer):
-            _ = recognizer
             return "complete text"
 
         @staticmethod
         def process_chunk(recognizer, audio_chunk):
-            _ = recognizer, audio_chunk
             return {"partial": "", "final": None, "is_final": False}
 
     monkeypatch.setenv("AUTH_REQUIRED", "false")
