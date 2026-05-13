@@ -74,7 +74,7 @@ class LiveTranscriptionService:
                 # Final result
                 final_json = recognizer.Result()
                 final_data = json.loads(final_json)
-                result["final"] = final_data.get("result")
+                result["final"] = final_data.get("text")
                 result["is_final"] = True
             else:
                 # Partial result
@@ -88,13 +88,17 @@ class LiveTranscriptionService:
         return result
 
     def get_final_result(self, recognizer: KaldiRecognizer) -> str:
-        """Get final result and reset recognizer for next session."""
+        """Get the recognizer's final result for the current session."""
         try:
             final_json = recognizer.Result()
             final_data = json.loads(final_json)
             result_list = final_data.get("result", [])
             # Join all words from the final result
-            return " ".join([item.get("conf", item.get("word", "")) for item in result_list if isinstance(item, dict)])
+            return " ".join(
+                item.get("word", "")
+                for item in result_list
+                if isinstance(item, dict) and isinstance(item.get("word", ""), str)
+            )
         except Exception as exc:
             logger.exception("Error getting final result")
             return ""
