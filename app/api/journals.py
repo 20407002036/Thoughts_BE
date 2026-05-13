@@ -276,10 +276,11 @@ async def live_transcribe_websocket(
                 message = data["text"].strip()
                 should_stop = message == "stop"
                 if not should_stop:
+                    control_payload = None
                     try:
                         control_payload = json.loads(message)
                     except json.JSONDecodeError:
-                        control_payload = None
+                        pass
                     should_stop = isinstance(control_payload, dict) and control_payload.get("action") == "stop"
 
                 if should_stop:

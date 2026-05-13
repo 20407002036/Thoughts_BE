@@ -21,7 +21,11 @@ def test_live_transcribe_websocket_rejects_missing_bearer_token(monkeypatch: pyt
     assert exc_info.value.code == 1008
 
 
-def test_live_transcribe_websocket_accepts_json_stop_command(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("stop_command", ['{  "action" : "stop" }', "stop"])
+def test_live_transcribe_websocket_accepts_stop_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    stop_command: str,
+) -> None:
     class DummyLiveTranscriptionService:
         def __init__(self, settings):
             pass
@@ -43,7 +47,7 @@ def test_live_transcribe_websocket_accepts_json_stop_command(monkeypatch: pytest
     client = TestClient(app)
     try:
         with client.websocket_connect("/v1/journals/live-transcribe") as websocket:
-            websocket.send_text('{  "action" : "stop" }')
+            websocket.send_text(stop_command)
             payload = websocket.receive_json()
     finally:
         get_settings.cache_clear()
