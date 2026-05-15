@@ -74,7 +74,7 @@ class LiveTranscriptionService:
                 # Final result
                 final_json = recognizer.Result()
                 final_data = json.loads(final_json)
-                result["final"] = final_data.get("result")
+                result["final"] = final_data.get("text")
                 result["is_final"] = True
             else:
                 # Partial result

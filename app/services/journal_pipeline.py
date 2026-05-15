@@ -26,12 +26,14 @@ class JournalPipeline:
         transcription_service: TranscriptionService,
         analysis_service: AnalysisService,
         journal_repository: JournalRepository,
+        streak_service: Any,
     ) -> None:
         self._settings = settings
         self._storage = storage_service
         self._transcription = transcription_service
         self._analysis = analysis_service
         self._repository = journal_repository
+        self._streak_service = streak_service
 
     async def process_upload(self, user_id: str, audio_file: UploadFile) -> JournalEntryResponse:
         content_type = audio_file.content_type or ""
@@ -82,6 +84,9 @@ class JournalPipeline:
             created_at = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
         else:
             created_at = datetime.now(timezone.utc)
+
+        # Update streak for the day
+        self._streak_service.update_streak(user_id=user_id)
 
         return JournalEntryResponse(
             id=str(saved.get("id", "")),
