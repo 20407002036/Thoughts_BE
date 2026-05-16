@@ -137,19 +137,24 @@ class ProfileRepository:
             raise ProfileRepositoryError("Supabase preferences upsert returned no row")
         return self._preferences_from_profile(rows[0])
 
-    def update_streak(self, user_id: str, streak_count: int, last_journal_saved: str) -> dict[str, Any]:
+    def update_streak(self, user_id: str, streak_count: int, last_journal_saved: str | None = None) -> dict[str, Any]:
         if self._client is None:
             profile = self._local_profiles.get(user_id) or self._default_profile(user_id)
             profile["streak_count"] = streak_count
-            profile["last_journal_saved"] = last_journal_saved
+            if last_journal_saved is not None:
+                profile["last_journal_saved"] = last_journal_saved
             profile["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._local_profiles[user_id] = profile
             return profile
 
         try:
+            payload = {"id": user_id, "streak_count": streak_count}
+            if last_journal_saved is not None:
+                payload["last_journal_saved"] = last_journal_saved
+
             result = (
                 self._client.table(self._settings.supabase_profiles_table)
-                .upsert({"id": user_id, "streak_count": streak_count, "last_journal_saved": last_journal_saved}, on_conflict="id")
+                .upsert(payload, on_conflict="id")
                 .execute()
             )
         except APIError as exc:
@@ -180,4 +185,4 @@ class ProfileRepository:
         return result.data or []
 
     def reset_streak(self, user_id: str) -> dict[str, Any]:
-        return self.update_streak(user_id, 0, datetime.now(timezone.utc).isoformat())
+        return self.update_streak(user_id, 0)
