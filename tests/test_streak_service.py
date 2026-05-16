@@ -1,7 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 import pytest
-import zoneinfo
 
 from app.services.streak_service import StreakService
 from app.repositories.profile_repository import ProfileRepository
