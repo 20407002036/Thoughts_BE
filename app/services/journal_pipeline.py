@@ -26,7 +26,7 @@ class JournalPipeline:
         transcription_service: TranscriptionService,
         analysis_service: AnalysisService,
         journal_repository: JournalRepository,
-        streak_service: Any,
+        streak_service: object | None = None,
     ) -> None:
         self._settings = settings
         self._storage = storage_service
