@@ -137,6 +137,17 @@ class ProfileRepository:
             raise ProfileRepositoryError("Supabase preferences upsert returned no row")
         return self._preferences_from_profile(rows[0])
 
+    @staticmethod
+    def _preferences_from_profile(profile: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "notifications_enabled": profile.get("notifications_enabled", True),
+            "prompt_reminder_time": profile.get("prompt_reminder_time"),
+            "appearance_mode": profile.get("appearance_mode") or "system",
+            "audio_quality": profile.get("audio_quality") or "standard",
+            "language": profile.get("language") or "en",
+            "encryption_status": profile.get("encryption_status") or "managed",
+        }
+
     def update_streak(self, user_id: str, streak_count: int, last_journal_saved: str | None = None) -> dict[str, Any]:
         if self._client is None:
             profile = self._local_profiles.get(user_id) or self._default_profile(user_id)
