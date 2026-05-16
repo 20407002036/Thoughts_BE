@@ -6,6 +6,7 @@ from app.repositories.profile_repository import ProfileRepository
 
 logger = logging.getLogger(__name__)
 
+
 class StreakService:
     def __init__(self, profile_repository: ProfileRepository) -> None:
         self._profile_repository = profile_repository
