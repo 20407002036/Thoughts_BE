@@ -26,7 +26,7 @@ class JournalPipeline:
         transcription_service: TranscriptionService,
         analysis_service: AnalysisService,
         journal_repository: JournalRepository,
-        streak_service: Any,
+        streak_service: object | None = None,
     ) -> None:
         self._settings = settings
         self._storage = storage_service
@@ -85,8 +85,21 @@ class JournalPipeline:
         else:
             created_at = datetime.now(timezone.utc)
 
-        # Update streak for the day
-        self._streak_service.update_streak(user_id=user_id)
+        # Update streak for the day as a best-effort follow-up so a saved
+        # journal entry is not reported as a failed request if the streak
+        # update cannot be persisted.
+        try:
+            await self._run_with_timeout(
+                "update_streak",
+                self._streak_service.update_streak,
+                user_id=user_id,
+            )
+        except Exception:
+            logger.warning(
+                "streak_update_failed",
+                extra={"user_id": user_id, "journal_id": str(saved.get("id", ""))},
+                exc_info=True,
+            )
 
         return JournalEntryResponse(
             id=str(saved.get("id", "")),

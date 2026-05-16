@@ -45,7 +45,7 @@ def reset_streaks():
 
         reset_count = streak_service.reset_expired_streaks()
         logger.info(f"Streak reset task completed. Reset {reset_count} streaks.")
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to reset expired streaks")
-        return False
+        raise
     return True
