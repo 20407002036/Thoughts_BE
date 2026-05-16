@@ -168,8 +168,13 @@ class ProfileRepository:
     def get_profiles_inactive_since(self, cutoff_time: str) -> list[dict[str, Any]]:
         """Returns profiles where last_journal_saved is older than cutoff_time."""
         if self._client is None:
-            return [p for p in self._local_profiles.values()
-                    if p.get("last_journal_saved") and p["last_journal_saved"] < cutoff_time]
+            return [
+                p
+                for p in self._local_profiles.values()
+                if p.get("last_journal_saved")
+                and p["last_journal_saved"] < cutoff_time
+                and p.get("streak_count", 0) > 0
+            ]
 
         try:
             result = (
