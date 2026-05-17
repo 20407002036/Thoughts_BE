@@ -15,12 +15,14 @@ from app.models.schemas import (
     UpdateJournalEntryRequest,
 )
 from app.repositories.journal_repository import JournalRepository, JournalRepositoryError
+from app.repositories.profile_repository import ProfileRepository
 from app.services.analysis_service import AnalysisError, AnalysisService
 from app.services.journal_service import JournalNotFoundError, JournalService, JournalValidationError
 from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError
 from app.services.live_transcription_service import LiveTranscriptionError, LiveTranscriptionService
 from app.services.storage_service import StorageService
 from app.services.transcription_service import TranscriptionError, TranscriptionService
+from app.services.streak_service import StreakService
 
 router = APIRouter(prefix="/v1/journals", tags=["journals"])
 entries_router = APIRouter(prefix="/v1/entries", tags=["entries"])
@@ -35,6 +37,16 @@ def _build_journal_repository() -> JournalRepository:
 
 
 @lru_cache
+def _build_profile_repository() -> ProfileRepository:
+    return ProfileRepository(get_settings())
+
+
+@lru_cache
+def _build_streak_service() -> StreakService:
+    return StreakService(profile_repository=_build_profile_repository())
+
+
+@lru_cache
 def _build_pipeline() -> JournalPipeline:
     settings = get_settings()
     return JournalPipeline(
@@ -43,6 +55,7 @@ def _build_pipeline() -> JournalPipeline:
         transcription_service=TranscriptionService(settings),
         analysis_service=AnalysisService(settings),
         journal_repository=_build_journal_repository(),
+        streak_service=_build_streak_service(),
     )
 
 

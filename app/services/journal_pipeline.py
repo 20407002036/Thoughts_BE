@@ -26,12 +26,14 @@ class JournalPipeline:
         transcription_service: TranscriptionService,
         analysis_service: AnalysisService,
         journal_repository: JournalRepository,
+        streak_service: object | None = None,
     ) -> None:
         self._settings = settings
         self._storage = storage_service
         self._transcription = transcription_service
         self._analysis = analysis_service
         self._repository = journal_repository
+        self._streak_service = streak_service
 
     async def process_upload(self, user_id: str, audio_file: UploadFile) -> JournalEntryResponse:
         content_type = audio_file.content_type or ""
@@ -82,6 +84,22 @@ class JournalPipeline:
             created_at = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
         else:
             created_at = datetime.now(timezone.utc)
+
+        # Update streak for the day as a best-effort follow-up so a saved
+        # journal entry is not reported as a failed request if the streak
+        # update cannot be persisted.
+        try:
+            await self._run_with_timeout(
+                "update_streak",
+                self._streak_service.update_streak,
+                user_id=user_id,
+            )
+        except Exception:
+            logger.warning(
+                "streak_update_failed",
+                extra={"user_id": user_id, "journal_id": str(saved.get("id", ""))},
+                exc_info=True,
+            )
 
         return JournalEntryResponse(
             id=str(saved.get("id", "")),

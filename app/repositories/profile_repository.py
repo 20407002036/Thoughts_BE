@@ -147,3 +147,58 @@ class ProfileRepository:
             "language": profile.get("language") or "en",
             "encryption_status": profile.get("encryption_status") or "managed",
         }
+
+    def update_streak(self, user_id: str, streak_count: int, last_journal_saved: str | None = None) -> dict[str, Any]:
+        if self._client is None:
+            profile = self._local_profiles.get(user_id) or self._default_profile(user_id)
+            profile["streak_count"] = streak_count
+            if last_journal_saved is not None:
+                profile["last_journal_saved"] = last_journal_saved
+            profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._local_profiles[user_id] = profile
+            return profile
+
+        try:
+            payload = {"id": user_id, "streak_count": streak_count}
+            if last_journal_saved is not None:
+                payload["last_journal_saved"] = last_journal_saved
+
+            result = (
+                self._client.table(self._settings.supabase_profiles_table)
+                .upsert(payload, on_conflict="id")
+                .execute()
+            )
+        except APIError as exc:
+            raise ProfileRepositoryError(f"Supabase streak update failed: {exc.message}") from exc
+
+        rows = result.data or []
+        if not rows:
+            raise ProfileRepositoryError("Supabase streak update returned no row")
+        return rows[0]
+
+    def get_profiles_inactive_since(self, cutoff_time: str) -> list[dict[str, Any]]:
+        """Returns profiles where last_journal_saved is older than cutoff_time."""
+        if self._client is None:
+            return [
+                p
+                for p in self._local_profiles.values()
+                if p.get("last_journal_saved")
+                and p["last_journal_saved"] < cutoff_time
+                and p.get("streak_count", 0) > 0
+            ]
+
+        try:
+            result = (
+                self._client.table(self._settings.supabase_profiles_table)
+                .select("id, streak_count")
+                .lt("last_journal_saved", cutoff_time)
+                .gt("streak_count", 0)
+                .execute()
+            )
+        except APIError as exc:
+            raise ProfileRepositoryError(f"Supabase inactive profiles query failed: {exc.message}") from exc
+
+        return result.data or []
+
+    def reset_streak(self, user_id: str) -> dict[str, Any]:
+        return self.update_streak(user_id, 0)
