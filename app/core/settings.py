@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     groq_whisper_model: str = "whisper-large-v3"
     groq_llm_model: str = "llama-3.3-70b-versatile"
 
+    vosk_model_path: Optional[str] = None
+
     max_upload_mb: int = 12
     request_timeout_seconds: int = 30
     analysis_prompt_version: str = "v1"
@@ -34,6 +36,8 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = True
     cors_allow_methods: str = "*"
     cors_allow_headers: str = "*"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 
