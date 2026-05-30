@@ -92,13 +92,19 @@ class LiveTranscriptionService:
         try:
             final_json = recognizer.Result()
             final_data = json.loads(final_json)
+            text = final_data.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+
             result_list = final_data.get("result", [])
-            # Join all words from the final result
-            return " ".join(
-                item.get("word", "")
-                for item in result_list
-                if isinstance(item, dict) and isinstance(item.get("word", ""), str)
-            )
+            if isinstance(result_list, list) and result_list:
+                return " ".join(
+                    item.get("word", "")
+                    for item in result_list
+                    if isinstance(item, dict) and isinstance(item.get("word", ""), str)
+                ).strip()
+
+            return ""
         except Exception as exc:
             logger.exception("Error getting final result")
             return ""
