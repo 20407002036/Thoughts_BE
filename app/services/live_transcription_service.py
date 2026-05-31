@@ -85,6 +85,10 @@ class LiveTranscriptionService:
             logger.exception("Error processing audio chunk")
             raise LiveTranscriptionError("Failed to process audio chunk") from exc
 
+        if result["final"] == None:
+            print(partial_data.get("partial"))
+        else:
+            print(result["final"])
         return result
 
     def get_final_result(self, recognizer: KaldiRecognizer) -> str:
