@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Any
+import logging
 
 from app.models.schemas import (
     JournalEntryDetail,
@@ -10,6 +11,9 @@ from app.models.schemas import (
     Transcript,
 )
 from app.repositories.journal_repository import JournalRepository
+from app.services.storage_service import StorageService
+
+logger = logging.getLogger(__name__)
 
 
 class JournalNotFoundError(RuntimeError):
@@ -21,8 +25,9 @@ class JournalValidationError(RuntimeError):
 
 
 class JournalService:
-    def __init__(self, journal_repository: JournalRepository) -> None:
+    def __init__(self, journal_repository: JournalRepository, storage_service: StorageService | None = None) -> None:
         self._journal_repository = journal_repository
+        self._storage = storage_service
 
     def list_entries(
         self,
@@ -53,6 +58,17 @@ class JournalService:
         row = self._journal_repository.get_entry(user_id=user_id, entry_id=entry_id)
         if row is None:
             raise JournalNotFoundError("Journal entry not found")
+        # Refresh signed URL at read time (response-only). Do not persist to DB here.
+        try:
+            audio_path = row.get("audio_path") if isinstance(row, dict) else None
+            if self._storage and audio_path:
+                signed = self._storage.signed_url_for_path(audio_path)
+                # copy row so we don't mutate repository internals
+                row = dict(row)
+                row["audio_signed_url"] = signed
+        except Exception:
+            logger.exception("failed_to_refresh_signed_url")
+
         return self._detail_from_row(row)
 
     def update_entry(

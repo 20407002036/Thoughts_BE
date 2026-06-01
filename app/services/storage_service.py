@@ -41,3 +41,14 @@ class StorageService:
         )
         signed_url = signed.get("signedURL") if isinstance(signed, dict) else None
         return storage_path, signed_url
+
+    def signed_url_for_path(self, storage_path: str) -> str | None:
+        """Return a fresh signed URL for an existing storage path or None in local-fallback mode."""
+        if self._client is None:
+            return None
+
+        signed = self._client.storage.from_(self._settings.supabase_bucket).create_signed_url(
+            storage_path,
+            self._settings.signed_url_expiry_seconds,
+        )
+        return signed.get("signedURL") if isinstance(signed, dict) else None

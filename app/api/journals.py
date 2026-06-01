@@ -51,7 +51,7 @@ def _build_pipeline() -> JournalPipeline:
     settings = get_settings()
     return JournalPipeline(
         settings=settings,
-        storage_service=StorageService(settings),
+        storage_service=_build_storage_service(),
         transcription_service=TranscriptionService(settings),
         analysis_service=AnalysisService(settings),
         journal_repository=_build_journal_repository(),
@@ -67,7 +67,12 @@ def get_pipeline(settings: Settings = Depends(get_settings)) -> JournalPipeline:
 
 @lru_cache
 def _build_journal_service() -> JournalService:
-    return JournalService(journal_repository=_build_journal_repository())
+    return JournalService(journal_repository=_build_journal_repository(), storage_service=_build_storage_service())
+
+
+@lru_cache
+def _build_storage_service() -> StorageService:
+    return StorageService(get_settings())
 
 
 def get_journal_service(settings: Settings = Depends(get_settings)) -> JournalService:
