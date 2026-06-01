@@ -84,7 +84,8 @@ def test_journal_service_get_entry_refreshes_audio_signed_url_with_storage_servi
 
     storage = _FakeStorageService()
     service = JournalService(_journal_repository_with_entries(), storage_service=storage)
-    entry_id = service.list_entries(user_id="user-1", limit=1, offset=0, month=None, query=None, tag=None).entries[0].id
+    page = service.list_entries(user_id="user-1", limit=1, offset=0, month=None, query=None, tag=None)
+    entry_id = page.entries[0].id
 
     detail = service.get_entry(user_id="user-1", entry_id=entry_id)
 
