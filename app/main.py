@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
+from app.api.challenges import router as challenges_router
 from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
 from app.api.journals import entries_router, router as journals_router
@@ -36,6 +37,7 @@ app.include_router(recordings_router)
 app.include_router(profile_router)
 app.include_router(preferences_router)
 app.include_router(dashboard_router)
+app.include_router(challenges_router)
 
 
 def _error_payload(error: str, message: str) -> dict[str, str]:

@@ -41,6 +41,8 @@ def test_live_transcribe_websocket_accepts_stop_commands(
             return {"partial": "", "final": None, "is_final": False}
 
     monkeypatch.setenv("AUTH_REQUIRED", "false")
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "")
     get_settings.cache_clear()
     monkeypatch.setattr("app.api.journals.LiveTranscriptionService", DummyLiveTranscriptionService)
 
