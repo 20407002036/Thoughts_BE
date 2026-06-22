@@ -196,3 +196,43 @@ class DashboardSummary(BaseModel):
     recent_entries: list[JournalEntrySummary] = Field(default_factory=list)
     streak_count: int = 0
     entry_count: int = 0
+
+
+class ChallengeResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    difficulty: str
+    prompt_text: str
+    vocal_goal: str
+    time_limit_seconds: int
+
+
+class FillerWordMetric(BaseModel):
+    word: str
+    count: int
+
+
+class ChallengeAttemptMetrics(BaseModel):
+    duration_seconds: float
+    word_count: int
+    wpm: int
+    filler_words_count: int
+
+
+class ChallengeEvaluation(BaseModel):
+    score: int
+    pacing_rating: str
+    pacing_explanation: str
+    filler_words_breakdown: list[FillerWordMetric] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    areas_for_improvement: list[str] = Field(default_factory=list)
+    vinh_giang_drill: str
+
+
+class ChallengeAttemptResponse(BaseModel):
+    attempt_id: str
+    challenge_id: str
+    metrics: ChallengeAttemptMetrics
+    evaluation: ChallengeEvaluation
+
