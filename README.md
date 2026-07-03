@@ -33,9 +33,21 @@ This service accepts journal audio uploads and runs a full pipeline:
    uvicorn app.main:app --reload
    ```
 
+5. Start the Background Worker (in a separate terminal):
+
+   ```bash
+   celery -A app.worker.app worker --loglevel=info
+   ```
+
+6. Start the Scheduler (in a separate terminal):
+
+   ```bash
+   celery -A app.worker.app beat --loglevel=info
+   ```
+
 ## Render deployment
 
-- Build Command: `bash render_build_setup.sh`
+- Build Command: `pip install -r requirements.txt`
 - Start Command: `bash render_start.sh`
 - Runtime: `runtime.txt` pins Python 3.13.0 so `pydantic-core` and PyO3 stay compatible.
 
@@ -64,6 +76,8 @@ This service accepts journal audio uploads and runs a full pipeline:
 | MAX_UPLOAD_MB | no | Max upload size guardrail |
 | REQUEST_TIMEOUT_SECONDS | no | Request and pipeline stage timeout |
 | ANALYSIS_PROMPT_VERSION | no | Version marker stored per journal |
+| CELERY_BROKER_URL | no | Redis URL for task queue (default: redis://localhost:6379/0) |
+| CELERY_RESULT_BACKEND | no | Redis URL for task results (default: redis://localhost:6379/0) |
 
 Notes:
 
@@ -249,6 +263,16 @@ Success response shape:
 ### GET /v1/recordings/{recordingId}
 
 Returns recording state. In the current synchronous implementation, existing recordings resolve to `completed` and use the journal entry id as the recording id.
+
+### WebSocket /v1/journals/live-transcribe
+
+Real-time audio transcription over WebSocket. Implementation lives in
+`app/services/live_transcription_service.py` and the WebSocket route in
+`app/api/journals.py` (the `/live-transcribe` endpoint). Connect to
+`ws://<host>/v1/journals/live-transcribe`, stream audio chunks, and
+receive partial + final transcription results. See the
+`LiveTranscriptionService` docstring and the WebSocket handler in
+`app/api/journals.py` for the message contract.
 
 ### POST /v1/auth/login
 
@@ -448,6 +472,74 @@ Success response shape:
 }
 ```
 
+### GET /v1/challenges
+
+Returns the catalog of active public speaking challenges.
+
+Success response shape:
+
+```json
+[
+  {
+    "id": "c76f6b55-d142-4f36-96b6-85777085fb0b",
+    "title": "The Power of the Pause",
+    "description": "Read the text below, but force yourself to pause for a full 2 seconds at every comma or period. Replace filler words with silence.",
+    "difficulty": "beginner",
+    "prompt_text": "Public speaking is not about the words we say. It is about the spaces between them. If you can master silence, you can master the room.",
+    "vocal_goal": "Eliminate filler words completely using intentional 2-second pauses.",
+    "time_limit_seconds": 60
+  }
+]
+```
+
+### GET /v1/challenges/{challengeId}
+
+Returns details of a specific challenge.
+
+### POST /v1/challenges/{challengeId}/attempt
+
+Ingests a practice recording, runs vocal metrics analysis, calls the Vinh Giang coaching evaluation system (via Groq LLM), persists the attempt, and returns structured feedback.
+
+Request:
+
+- Content-Type: multipart/form-data
+- Field: audio (required UploadFile, must be audio/*)
+- Optional field: duration_seconds (float, to override estimation)
+
+Success response shape:
+
+```json
+{
+  "attempt_id": "ee76d542-a8c1-4bfe-bb7c-ffb5597b83c5",
+  "challenge_id": "c76f6b55-d142-4f36-96b6-85777085fb0b",
+  "metrics": {
+    "duration_seconds": 18.5,
+    "word_count": 29,
+    "wpm": 94,
+    "filler_words_count": 2
+  },
+  "evaluation": {
+    "score": 82,
+    "pacing_rating": "Good control, slightly slow",
+    "pacing_explanation": "At 94 WPM, you spoke slowly, which gave you great authority. However, you can speed up slightly during key points to show excitement.",
+    "filler_words_breakdown": [
+      {"word": "um", "count": 1},
+      {"word": "like", "count": 1}
+    ],
+    "strengths": [
+      "Excellent 2-second pause after 'words we say'.",
+      "Deep, confident pitch during the final sentence."
+    ],
+    "areas_for_improvement": [
+      "You used a filler word 'um' right before starting. Try starting with silence.",
+      "Rushed the second sentence slightly, skipping the comma pause."
+    ],
+    "vinh_giang_drill": "Say the sentence: 'If you can master silence...' and clap once during the pause before saying 'you can master the room.' This will physically train your brain to embrace the silence."
+  }
+}
+```
+
+
 Error envelope for all handled failures:
 
 ```json
@@ -601,3 +693,12 @@ Week 6 end-to-end verification test:
 - Correlation ID is always returned as X-Correlation-ID and in error payloads.
 - Upload size guardrail is enforced at middleware and pipeline layers.
 - Local fallback mode allows demoing API behavior without external providers.
+
+## Known test issues
+
+- `tests/test_challenges.py` and `tests/test_speech_analytics.py` are
+  currently untracked in the working tree and fail pytest collection with
+  `ModuleNotFoundError`. They import `app.repositories.challenge_repository`,
+  `app.api.challenges`, and `app.services.speech_analytics`, all of which
+  live on the `feat/practiceChallenges` branch. The two files will begin
+  passing once that branch is merged into this one.
