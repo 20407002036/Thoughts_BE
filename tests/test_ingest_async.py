@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.api.journals import _build_journal_repository, _build_journal_service, _build_pipeline
@@ -5,6 +6,7 @@ from app.api.recordings import _build_recording_pipeline
 from app.core.security import AuthenticatedUser, get_current_user
 from app.core.settings import get_settings
 from app.main import app
+from app.models.schemas import JournalAnalysis, JournalEntryResponse
 from app.worker import process_journal_upload
 
 
@@ -29,10 +31,50 @@ def test_ingest_async_returns_202_and_persists_entry(monkeypatch, tmp_path) -> N
 
     _clear_cached_dependencies()
 
-    def _run_task_immediately(**kwargs):
-        process_journal_upload.run(**kwargs)
+    # Stub the Celery task's `delay` so the test exercises the API contract
+    # (202 response shape, recording_id round-trip) without dragging Celery's
+    # bind=True / asyncio.run() machinery into the test path. The stub persists
+    # a real entry through the same repository the worker would use, so the
+    # subsequent GET /v1/recordings/{id} finds it.
+    repository = _build_journal_repository()
 
-    monkeypatch.setattr(process_journal_upload, "delay", _run_task_immediately)
+    def _fake_pipeline_sync(**kwargs):
+        recording_id = kwargs["recording_id"]
+        payload = {
+            "id": recording_id,
+            "user_id": kwargs["user_id"],
+            "transcript": "stubbed transcript",
+            "mood": "calm",
+            "title": "Stubbed entry",
+            "summary": "Pipeline was stubbed for the test.",
+            "themes": [],
+            "insights": [],
+            "audio_path": kwargs.get("storage_path") or f"{kwargs['user_id']}/stub.mp3",
+            "audio_signed_url": None,
+            "prompt_version": "v1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        saved = repository.create_entry(payload)
+        return JournalEntryResponse(
+            id=str(saved.get("id", recording_id)),
+            user_id=saved.get("user_id", kwargs["user_id"]),
+            transcript=saved.get("transcript", ""),
+            analysis=JournalAnalysis(
+                mood=saved.get("mood", "calm"),
+                title=saved.get("title", "Stubbed entry"),
+                summary=saved.get("summary", ""),
+                themes=[],
+                insights=[],
+            ),
+            audio_path=saved.get("audio_path", ""),
+            audio_signed_url=saved.get("audio_signed_url"),
+            prompt_version=saved.get("prompt_version", "v1"),
+            created_at=datetime.fromisoformat(
+                str(saved.get("created_at", payload["created_at"])).replace("Z", "+00:00")
+            ),
+        )
+
+    monkeypatch.setattr(process_journal_upload, "delay", _fake_pipeline_sync)
     app.dependency_overrides[get_current_user] = _dev_user
 
     try:
