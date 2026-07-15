@@ -1,10 +1,13 @@
 import logging
 import json
 from functools import lru_cache
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import JSONResponse
 
 from app.core.rate_limit import ingest_rate_limit
+from app.core.logging import get_correlation_id
 from app.core.security import AuthenticatedUser, bearer_scheme, get_current_user
 from app.core.settings import Settings, get_settings
 from app.models.schemas import (
@@ -12,6 +15,7 @@ from app.models.schemas import (
     JournalEntryDetail,
     JournalEntryListResponse,
     JournalEntryResponse,
+    RecordingSessionResponse,
     UnsupportedActionResponse,
     UpdateJournalEntryRequest,
 )
@@ -83,11 +87,13 @@ def get_journal_service(settings: Settings = Depends(get_settings)) -> JournalSe
 
 @router.post(
     "/ingest",
-    response_model=JournalEntryResponse,
+    response_model=None,  # either JournalEntryResponse (sync) or RecordingSessionResponse (async)
     responses={
+        status.HTTP_202_ACCEPTED: {"model": RecordingSessionResponse},
         status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
         status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: {"model": ErrorResponse},
         status.HTTP_502_BAD_GATEWAY: {"model": ErrorResponse},
         status.HTTP_504_GATEWAY_TIMEOUT: {"model": ErrorResponse},
         status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": ErrorResponse},
@@ -98,26 +104,105 @@ async def ingest_journal_audio(
     current_user: AuthenticatedUser = Depends(get_current_user),
     _rate_limited: AuthenticatedUser = Depends(ingest_rate_limit()),
     pipeline: JournalPipeline = Depends(get_pipeline),
-) -> JournalEntryResponse:
-    try:
-        return await pipeline.process_upload(user_id=current_user.user_id, audio_file=audio)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except AnalysisError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    except TranscriptionError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    except JournalRepositoryError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    except PipelineTimeoutError as exc:
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
-    except HTTPException:
-        raise
-    except Exception as exc:
+    storage_service: StorageService = Depends(_build_storage_service),
+    settings: Settings = Depends(get_settings),
+):
+    """Ingest a journal audio upload.
+
+    With INGEST_ASYNC=true (production): upload to storage synchronously, enqueue
+    a Celery task, and return HTTP 202 with a RecordingSessionResponse. The
+    client polls GET /v1/recordings/{recording_id} for completion.
+
+    With INGEST_ASYNC=false (local dev default): run the full pipeline in the
+    request and return the completed JournalEntryResponse.
+    """
+    # Synchronous fallback path — preserves the original contract.
+    if not settings.ingest_async:
+        try:
+            return await pipeline.process_upload(user_id=current_user.user_id, audio_file=audio)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except AnalysisError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        except TranscriptionError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        except JournalRepositoryError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        except PipelineTimeoutError as exc:
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unexpected processing failure",
+            ) from exc
+
+    # Async path: validate, upload to storage, enqueue, return 202.
+    content_type = audio.content_type or ""
+    if not content_type.startswith("audio/"):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unexpected processing failure",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file must be an audio format",
+        )
+
+    content = await audio.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded audio file is empty",
+        )
+
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Audio exceeds max size of {settings.max_upload_mb} MB",
+        )
+
+    recording_id = str(uuid4())
+    try:
+        audio_path, _ = storage_service.upload_audio(
+            user_id=current_user.user_id,
+            filename=audio.filename,
+            content=content,
+            content_type=content_type,
+        )
+    except Exception as exc:
+        logger.exception("ingest_storage_upload_failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to store audio upload",
         ) from exc
+
+    # Imported here to avoid Celery import cost when INGEST_ASYNC is off.
+    from app.worker import process_journal_upload
+
+    correlation_id = get_correlation_id()
+    process_journal_upload.delay(
+        user_id=current_user.user_id,
+        audio_path=audio_path,
+        content_type=content_type,
+        recording_id=recording_id,
+        correlation_id=correlation_id,
+    )
+
+    logger.info(
+        "ingest_enqueued",
+        extra={
+            "user_id": current_user.user_id,
+            "recording_id": recording_id,
+            "audio_path": audio_path,
+        },
+    )
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content=RecordingSessionResponse(
+            recording_id=recording_id,
+            status="processing",
+            progress_percent=0,
+        ).model_dump(mode="json"),
+    )
 
 
 def _map_journal_repository_error(exc: JournalRepositoryError) -> HTTPException:

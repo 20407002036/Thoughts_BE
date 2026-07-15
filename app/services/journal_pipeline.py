@@ -48,20 +48,53 @@ class JournalPipeline:
         if len(content) > max_bytes:
             raise ValueError(f"Audio exceeds max size of {self._settings.max_upload_mb} MB")
 
-        audio_path, signed_url = await self._run_with_timeout(
-            "upload_audio",
-            self._storage.upload_audio,
+        return await self.run_pipeline(
             user_id=user_id,
-            filename=audio_file.filename,
-            content=content,
+            audio_bytes=content,
+            filename=audio_file.filename or "audio",
             content_type=content_type,
         )
+
+    async def run_pipeline(
+        self,
+        user_id: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str,
+        recording_id: str | None = None,
+        storage_path: str | None = None,
+        storage_signed_url: str | None = None,
+    ) -> JournalEntryResponse:
+        """Run transcribe → analyze → persist → streak for already-loaded audio bytes.
+
+        Used by both the synchronous API ingest path (after `process_upload` reads
+        the UploadFile) and the Celery worker (which downloads bytes from storage
+        by path before calling this).
+        """
+        if storage_path is None:
+            audio_path, signed_url = await self._run_with_timeout(
+                "upload_audio",
+                self._storage.upload_audio,
+                user_id=user_id,
+                filename=filename,
+                content=audio_bytes,
+                content_type=content_type,
+            )
+        else:
+            audio_path = storage_path
+            signed_url = storage_signed_url
+            if signed_url is None:
+                signed_url = await self._run_with_timeout(
+                    "signed_url",
+                    self._storage.signed_url_for_path,
+                    storage_path,
+                )
 
         transcript = await self._run_with_timeout(
             "transcribe",
             self._transcription.transcribe,
-            filename=audio_file.filename,
-            content=content,
+            filename=filename,
+            content=audio_bytes,
         )
         analysis = await self._run_with_timeout("analyze", self._analysis.analyze, transcript)
 
@@ -77,6 +110,9 @@ class JournalPipeline:
             "audio_signed_url": signed_url,
             "prompt_version": self._settings.analysis_prompt_version,
         }
+        if recording_id:
+            payload["id"] = recording_id
+
         saved = await self._run_with_timeout("create_entry", self._repository.create_entry, payload)
 
         created_at_raw = saved.get("created_at")
@@ -125,3 +161,31 @@ class JournalPipeline:
                 extra={"stage": stage, "timeout_seconds": timeout_seconds},
             )
             raise PipelineTimeoutError(f"Pipeline stage '{stage}' timed out") from exc
+
+    def run_pipeline_sync(
+        self,
+        user_id: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str,
+        recording_id: str | None = None,
+        storage_path: str | None = None,
+        storage_signed_url: str | None = None,
+    ) -> JournalEntryResponse:
+        """Synchronous entry point for the Celery worker.
+
+        The pipeline core is async because the API request handler awaits it; the
+        worker process is synchronous (Celery tasks aren't coroutines), so this
+        wrapper drives the same `run_pipeline` coroutine from a fresh event loop.
+        """
+        return asyncio.run(
+            self.run_pipeline(
+                user_id=user_id,
+                audio_bytes=audio_bytes,
+                filename=filename,
+                content_type=content_type,
+                recording_id=recording_id,
+                storage_path=storage_path,
+                storage_signed_url=storage_signed_url,
+            )
+        )

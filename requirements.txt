@@ -17,6 +17,6 @@ supabase==2.7.4
 groq==0.11.0
 vosk==0.3.45
 websockets==14.1
-gunicorn
+celery[redis]==5.4.0
 gunicorn
 pydantic-settings==2.5.2

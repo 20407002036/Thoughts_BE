@@ -52,3 +52,17 @@ class StorageService:
             self._settings.signed_url_expiry_seconds,
         )
         return signed.get("signedURL") if isinstance(signed, dict) else None
+
+    def download_audio(self, storage_path: str) -> bytes:
+        """Fetch previously uploaded audio bytes by storage path.
+
+        Used by the async ingest worker to read files that the API process uploaded
+        synchronously. In local-fallback mode this reads from the local uploads tree.
+        """
+        if self._client is None:
+            local_path = self._local_upload_dir / storage_path
+            if not local_path.exists():
+                raise FileNotFoundError(f"Audio not found at {local_path}")
+            return local_path.read_bytes()
+
+        return self._client.storage.from_(self._settings.supabase_bucket).download(storage_path)
