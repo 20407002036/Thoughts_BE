@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     cors_allow_headers: str = "*"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
+    ingest_async: bool = False
+    rate_limit_enabled: bool = True
+    rate_limit_ingest_per_minute: int = 5
+    rate_limit_ingest_per_hour: int = 30
+    redis_url: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 
