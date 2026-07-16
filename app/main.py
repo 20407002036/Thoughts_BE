@@ -46,11 +46,20 @@ def _error_payload(error: str, message: str) -> dict[str, str]:
 	}
 
 
-def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
+def _error_response(
+	status_code: int,
+	error: str,
+	message: str,
+	headers: dict[str, str] | None = None,
+) -> JSONResponse:
+	response_headers = {"X-Correlation-ID": get_correlation_id()}
+	if headers:
+		response_headers.update(headers)
+
 	return JSONResponse(
 		status_code=status_code,
 		content=_error_payload(error=error, message=message),
-		headers={"X-Correlation-ID": get_correlation_id()},
+		headers=response_headers,
 	)
 
 
@@ -133,7 +142,12 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 			"error_message": message,
 		},
 	)
-	return _error_response(status_code=exc.status_code, error=error, message=message)
+	return _error_response(
+		status_code=exc.status_code,
+		error=error,
+		message=message,
+		headers=exc.headers,
+	)
 
 
 @app.exception_handler(RequestValidationError)
