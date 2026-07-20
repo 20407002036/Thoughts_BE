@@ -95,8 +95,7 @@ def get_journal_service(settings: Settings = Depends(get_settings)) -> JournalSe
 )
 async def ingest_journal_audio(
     audio: UploadFile = File(...),
-    current_user: AuthenticatedUser = Depends(get_current_user),
-    _rate_limited: AuthenticatedUser = Depends(ingest_rate_limit()),
+    current_user: AuthenticatedUser = Depends(ingest_rate_limit()),
     pipeline: JournalPipeline = Depends(get_pipeline),
 ) -> JournalEntryResponse:
     try:
