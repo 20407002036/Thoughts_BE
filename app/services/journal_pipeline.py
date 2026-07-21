@@ -96,6 +96,11 @@ class JournalPipeline:
             filename=filename,
             content=audio_bytes,
         )
+        # Audio bytes are no longer needed after transcription — release the
+        # reference so the GC can reclaim the (potentially large) buffer while
+        # the rest of the pipeline (analysis, persist, streak) runs.
+        del audio_bytes
+
         analysis = await self._run_with_timeout("analyze", self._analysis.analyze, transcript)
 
         payload = {
