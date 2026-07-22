@@ -23,7 +23,7 @@ from app.repositories.journal_repository import JournalRepository, JournalReposi
 from app.repositories.profile_repository import ProfileRepository
 from app.services.analysis_service import AnalysisError, AnalysisService
 from app.services.journal_service import JournalNotFoundError, JournalService, JournalValidationError
-from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError
+from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError, read_upload_with_limit
 from app.services.live_transcription_service import LiveTranscriptionError, LiveTranscriptionService
 from app.services.storage_service import StorageService
 from app.services.transcription_service import TranscriptionError, TranscriptionService
@@ -145,18 +145,18 @@ async def ingest_journal_audio(
             detail="Uploaded file must be an audio format",
         )
 
-    content = await audio.read()
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    try:
+        content = await read_upload_with_limit(audio, max_bytes)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=str(exc),
+        )
     if not content:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded audio file is empty",
-        )
-
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Audio exceeds max size of {settings.max_upload_mb} MB",
         )
 
     recording_id = str(uuid4())
