@@ -66,3 +66,16 @@ class StorageService:
             return local_path.read_bytes()
 
         return self._client.storage.from_(self._settings.supabase_bucket).download(storage_path)
+
+    def delete_audio(self, storage_path: str) -> None:
+        """Remove an audio blob from storage.
+
+        Called by the pipeline to clean up orphaned uploads when a later stage
+        (transcription, analysis, persist) fails after the audio was already stored.
+        """
+        if self._client is None:
+            local_path = self._local_upload_dir / storage_path
+            local_path.unlink(missing_ok=True)
+            return
+
+        self._client.storage.from_(self._settings.supabase_bucket).remove([storage_path])

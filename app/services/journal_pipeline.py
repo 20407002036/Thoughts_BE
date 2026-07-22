@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
+from uuid import uuid4
 
 from fastapi import UploadFile
 
@@ -71,54 +72,74 @@ class JournalPipeline:
         the UploadFile) and the Celery worker (which downloads bytes from storage
         by path before calling this).
         """
-        if storage_path is None:
-            audio_path, signed_url = await self._run_with_timeout(
-                "upload_audio",
-                self._storage.upload_audio,
-                user_id=user_id,
+        uploaded_by_pipeline = storage_path is None
+        audio_path = None
+        try:
+            if uploaded_by_pipeline:
+                audio_path, signed_url = await self._run_with_timeout(
+                    "upload_audio",
+                    self._storage.upload_audio,
+                    user_id=user_id,
+                    filename=filename,
+                    content=audio_bytes,
+                    content_type=content_type,
+                )
+            else:
+                audio_path = storage_path
+                signed_url = storage_signed_url
+                if signed_url is None:
+                    signed_url = await self._run_with_timeout(
+                        "signed_url",
+                        self._storage.signed_url_for_path,
+                        storage_path,
+                    )
+
+            transcript = await self._run_with_timeout(
+                "transcribe",
+                self._transcription.transcribe,
                 filename=filename,
                 content=audio_bytes,
-                content_type=content_type,
             )
-        else:
-            audio_path = storage_path
-            signed_url = storage_signed_url
-            if signed_url is None:
-                signed_url = await self._run_with_timeout(
-                    "signed_url",
-                    self._storage.signed_url_for_path,
-                    storage_path,
-                )
+            # Audio bytes are no longer needed after transcription — release the
+            # reference so the GC can reclaim the (potentially large) buffer while
+            # the rest of the pipeline (analysis, persist, streak) runs.
+            del audio_bytes
 
-        transcript = await self._run_with_timeout(
-            "transcribe",
-            self._transcription.transcribe,
-            filename=filename,
-            content=audio_bytes,
-        )
-        # Audio bytes are no longer needed after transcription — release the
-        # reference so the GC can reclaim the (potentially large) buffer while
-        # the rest of the pipeline (analysis, persist, streak) runs.
-        del audio_bytes
+            analysis = await self._run_with_timeout("analyze", self._analysis.analyze, transcript)
 
-        analysis = await self._run_with_timeout("analyze", self._analysis.analyze, transcript)
+            payload = {
+                "user_id": user_id,
+                "transcript": transcript,
+                "mood": analysis.mood,
+                "title": analysis.title,
+                "summary": analysis.summary,
+                "themes": analysis.themes,
+                "insights": analysis.insights,
+                "audio_path": audio_path,
+                "audio_signed_url": signed_url,
+                "prompt_version": self._settings.analysis_prompt_version,
+            }
+            payload["id"] = recording_id if recording_id else str(uuid4())
 
-        payload = {
-            "user_id": user_id,
-            "transcript": transcript,
-            "mood": analysis.mood,
-            "title": analysis.title,
-            "summary": analysis.summary,
-            "themes": analysis.themes,
-            "insights": analysis.insights,
-            "audio_path": audio_path,
-            "audio_signed_url": signed_url,
-            "prompt_version": self._settings.analysis_prompt_version,
-        }
-        if recording_id:
-            payload["id"] = recording_id
-
-        saved = await self._run_with_timeout("create_entry", self._repository.create_entry, payload)
+            saved = await self._run_with_timeout("create_entry", self._repository.create_entry, payload)
+        except Exception:
+            # If the pipeline uploaded the audio and a later stage failed,
+            # delete the orphaned blob so storage doesn't accumulate
+            # unreferenced files.
+            if uploaded_by_pipeline and audio_path:
+                try:
+                    await self._run_with_timeout(
+                        "cleanup_storage",
+                        self._storage.delete_audio,
+                        audio_path,
+                    )
+                except Exception:
+                    logger.warning(
+                        "storage_cleanup_failed",
+                        extra={"audio_path": audio_path, "user_id": user_id},
+                        exc_info=True,
+                    )
+            raise
 
         created_at_raw = saved.get("created_at")
         if created_at_raw:

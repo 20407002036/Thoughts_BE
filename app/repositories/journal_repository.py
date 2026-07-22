@@ -25,7 +25,6 @@ class JournalRepository:
         if self._client is None:
             entry = {
                 **payload,
-                "id": str(payload.get("id") or uuid4()),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             self._local_entries.append(entry)
