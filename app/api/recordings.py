@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from functools import lru_cache
 from uuid import uuid4
@@ -84,11 +85,21 @@ async def create_recording(
         recording_id = str(uuid4())
         storage = StorageService(settings)
         try:
-            audio_path, _ = storage.upload_audio(
-                user_id=current_user.user_id,
-                filename=audio.filename,
-                content=content,
-                content_type=content_type,
+            audio_path, _ = await asyncio.wait_for(
+                asyncio.to_thread(
+                    storage.upload_audio,
+                    user_id=current_user.user_id,
+                    filename=audio.filename,
+                    content=content,
+                    content_type=content_type,
+                ),
+                timeout=settings.request_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("recordings_storage_upload_timeout", extra={"user_id": current_user.user_id})
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Storage upload timed out",
             )
         except Exception as exc:
             logger.exception("recordings_storage_upload_failed")

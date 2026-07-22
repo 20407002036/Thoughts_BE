@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import json
 from functools import lru_cache
@@ -161,11 +162,21 @@ async def ingest_journal_audio(
 
     recording_id = str(uuid4())
     try:
-        audio_path, _ = storage_service.upload_audio(
-            user_id=current_user.user_id,
-            filename=audio.filename,
-            content=content,
-            content_type=content_type,
+        audio_path, _ = await asyncio.wait_for(
+            asyncio.to_thread(
+                storage_service.upload_audio,
+                user_id=current_user.user_id,
+                filename=audio.filename,
+                content=content,
+                content_type=content_type,
+            ),
+            timeout=settings.request_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("ingest_storage_upload_timeout", extra={"user_id": current_user.user_id})
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Storage upload timed out",
         )
     except Exception as exc:
         logger.exception("ingest_storage_upload_failed")

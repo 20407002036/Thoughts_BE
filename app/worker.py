@@ -86,6 +86,14 @@ def process_journal_upload(
     }
     logger.info("process_journal_upload_started", extra=log_extra)
 
+    if not recording_id:
+        recording_id = str(uuid4())
+        logger.warning(
+            "process_journal_upload_missing_recording_id",
+            extra={**log_extra, "generated_recording_id": recording_id},
+        )
+        log_extra["recording_id"] = recording_id
+
     try:
         storage = StorageService(get_settings())
         audio_bytes = storage.download_audio(audio_path)

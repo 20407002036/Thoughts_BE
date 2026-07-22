@@ -30,6 +30,7 @@ def test_journal_repository_creates_local_entry_when_supabase_not_configured() -
 
     saved = repository.create_entry(
         {
+            "id": "test-entry-1",
             "user_id": "user-1",
             "transcript": "Today was calm",
             "mood": "calm",
