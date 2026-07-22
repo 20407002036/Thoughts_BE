@@ -9,10 +9,9 @@ from fastapi.responses import JSONResponse
 from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
-from app.api.journals import entries_router, router as journals_router
+from app.api.journals import entries_router, recordings_router, router as journals_router
 from app.api.preferences import router as preferences_router
 from app.api.profile import router as profile_router
-from app.api.recordings import router as recordings_router
 from app.core.logging import configure_logging, get_correlation_id, set_correlation_id
 from app.core.settings import get_settings
 

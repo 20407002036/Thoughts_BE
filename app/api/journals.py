@@ -31,6 +31,7 @@ from app.services.streak_service import StreakService
 
 router = APIRouter(prefix="/v1/journals", tags=["journals"])
 entries_router = APIRouter(prefix="/v1/entries", tags=["entries"])
+recordings_router = APIRouter(prefix="/v1/recordings", tags=["recordings"])
 logger = logging.getLogger(__name__)
 # RFC 6455 limits websocket close reason payload to 123 bytes.
 MAX_WS_CLOSE_REASON_LEN = 123
@@ -445,4 +446,36 @@ def share_journal_entry(entry_id: str, current_user: AuthenticatedUser = Depends
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="Journal sharing is not supported yet",
+    )
+
+
+@recordings_router.get(
+    "/{recording_id}",
+    response_model=RecordingSessionResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_502_BAD_GATEWAY: {"model": ErrorResponse},
+    },
+)
+def get_recording(
+    recording_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    journal_service: JournalService = Depends(get_journal_service),
+) -> RecordingSessionResponse:
+    try:
+        entry = journal_service.get_entry(user_id=current_user.user_id, entry_id=recording_id)
+    except JournalNotFoundError:
+        return RecordingSessionResponse(
+            recording_id=recording_id,
+            status="processing",
+            progress_percent=0,
+        )
+    except JournalRepositoryError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return RecordingSessionResponse(
+        recording_id=recording_id,
+        status="completed",
+        progress_percent=100,
+        entry_id=entry.id,
     )
