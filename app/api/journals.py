@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 
+from app.core.rate_limit import ingest_rate_limit
 from app.core.logging import get_correlation_id
 from app.core.security import AuthenticatedUser, bearer_scheme, get_current_user
 from app.core.settings import Settings, get_settings
@@ -93,6 +94,7 @@ def get_journal_service(settings: Settings = Depends(get_settings)) -> JournalSe
         status.HTTP_202_ACCEPTED: {"model": RecordingSessionResponse},
         status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
         status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: {"model": ErrorResponse},
         status.HTTP_502_BAD_GATEWAY: {"model": ErrorResponse},
         status.HTTP_504_GATEWAY_TIMEOUT: {"model": ErrorResponse},
@@ -101,7 +103,7 @@ def get_journal_service(settings: Settings = Depends(get_settings)) -> JournalSe
 )
 async def ingest_journal_audio(
     audio: UploadFile = File(...),
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(ingest_rate_limit()),
     pipeline: JournalPipeline = Depends(get_pipeline),
     storage_service: StorageService = Depends(_build_storage_service),
     settings: Settings = Depends(get_settings),
