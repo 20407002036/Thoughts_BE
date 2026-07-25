@@ -7,6 +7,23 @@ from fastapi import UploadFile
 
 from app.core.settings import Settings
 from app.models.schemas import JournalEntryResponse
+
+_READ_CHUNK_SIZE = 64 * 1024  # 64 KB
+
+
+async def read_upload_with_limit(upload_file: UploadFile, max_bytes: int) -> bytes:
+    """Read an UploadFile in chunks, aborting as soon as *max_bytes* is exceeded."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload_file.read(_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"Audio exceeds max size of {max_bytes // (1024 * 1024)} MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
 from app.repositories.journal_repository import JournalRepository
 from app.services.analysis_service import AnalysisService
 from app.services.storage_service import StorageService
@@ -41,13 +58,10 @@ class JournalPipeline:
         if not content_type.startswith("audio/"):
             raise ValueError("Uploaded file must be an audio format")
 
-        content = await audio_file.read()
+        max_bytes = self._settings.max_upload_mb * 1024 * 1024
+        content = await read_upload_with_limit(audio_file, max_bytes)
         if not content:
             raise ValueError("Uploaded audio file is empty")
-
-        max_bytes = self._settings.max_upload_mb * 1024 * 1024
-        if len(content) > max_bytes:
-            raise ValueError(f"Audio exceeds max size of {self._settings.max_upload_mb} MB")
 
         return await self.run_pipeline(
             user_id=user_id,

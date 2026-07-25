@@ -24,7 +24,7 @@ from app.repositories.journal_repository import JournalRepository, JournalReposi
 from app.repositories.profile_repository import ProfileRepository
 from app.services.analysis_service import AnalysisError, AnalysisService
 from app.services.journal_service import JournalNotFoundError, JournalService, JournalValidationError
-from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError
+from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError, read_upload_with_limit
 from app.services.live_transcription_service import LiveTranscriptionError, LiveTranscriptionService
 from app.services.storage_service import StorageService
 from app.services.transcription_service import TranscriptionError, TranscriptionService
@@ -32,6 +32,7 @@ from app.services.streak_service import StreakService
 
 router = APIRouter(prefix="/v1/journals", tags=["journals"])
 entries_router = APIRouter(prefix="/v1/entries", tags=["entries"])
+recordings_router = APIRouter(prefix="/v1/recordings", tags=["recordings"])
 logger = logging.getLogger(__name__)
 # RFC 6455 limits websocket close reason payload to 123 bytes.
 MAX_WS_CLOSE_REASON_LEN = 123
@@ -146,18 +147,18 @@ async def ingest_journal_audio(
             detail="Uploaded file must be an audio format",
         )
 
-    content = await audio.read()
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    try:
+        content = await read_upload_with_limit(audio, max_bytes)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=str(exc),
+        )
     if not content:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded audio file is empty",
-        )
-
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Audio exceeds max size of {settings.max_upload_mb} MB",
         )
 
     recording_id = str(uuid4())
@@ -447,4 +448,36 @@ def share_journal_entry(entry_id: str, current_user: AuthenticatedUser = Depends
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="Journal sharing is not supported yet",
+    )
+
+
+@recordings_router.get(
+    "/{recording_id}",
+    response_model=RecordingSessionResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_502_BAD_GATEWAY: {"model": ErrorResponse},
+    },
+)
+def get_recording(
+    recording_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    journal_service: JournalService = Depends(get_journal_service),
+) -> RecordingSessionResponse:
+    try:
+        entry = journal_service.get_entry(user_id=current_user.user_id, entry_id=recording_id)
+    except JournalNotFoundError:
+        return RecordingSessionResponse(
+            recording_id=recording_id,
+            status="processing",
+            progress_percent=0,
+        )
+    except JournalRepositoryError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return RecordingSessionResponse(
+        recording_id=recording_id,
+        status="completed",
+        progress_percent=100,
+        entry_id=entry.id,
     )

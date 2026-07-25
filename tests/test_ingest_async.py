@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.api.journals import _build_journal_repository, _build_journal_service, _build_pipeline
-from app.api.recordings import _build_recording_pipeline
 from app.core.security import AuthenticatedUser, get_current_user
 from app.core.settings import get_settings
 from app.main import app
@@ -19,7 +18,6 @@ def _clear_cached_dependencies() -> None:
     _build_pipeline.cache_clear()
     _build_journal_repository.cache_clear()
     _build_journal_service.cache_clear()
-    _build_recording_pipeline.cache_clear()
 
 
 def test_ingest_async_returns_202_and_persists_entry(monkeypatch, tmp_path) -> None:
