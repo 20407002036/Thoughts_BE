@@ -130,7 +130,6 @@ class JournalPipeline:
                 "themes": analysis.themes,
                 "insights": analysis.insights,
                 "audio_path": audio_path,
-                "audio_signed_url": signed_url,
                 "prompt_version": self._settings.analysis_prompt_version,
             }
             payload["id"] = recording_id if recording_id else str(uuid4())
