@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     supabase_profiles_table: str = "user_profiles"
     signed_url_expiry_seconds: int = 3600
 
+    # Base64-encoded 32-byte AES-256 key for at-rest encryption of journal
+    # contents. None disables encryption (plaintext rows, local dev mode).
+    journal_encryption_key: Optional[str] = None
+
     groq_api_key: Optional[str] = None
     groq_whisper_model: str = "whisper-large-v3"
     groq_llm_model: str = "llama-3.3-70b-versatile"
