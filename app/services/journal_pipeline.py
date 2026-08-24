@@ -1,11 +1,29 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
+from uuid import uuid4
 
 from fastapi import UploadFile
 
 from app.core.settings import Settings
 from app.models.schemas import JournalEntryResponse
+
+_READ_CHUNK_SIZE = 64 * 1024  # 64 KB
+
+
+async def read_upload_with_limit(upload_file: UploadFile, max_bytes: int) -> bytes:
+    """Read an UploadFile in chunks, aborting as soon as *max_bytes* is exceeded."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload_file.read(_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"Audio exceeds max size of {max_bytes // (1024 * 1024)} MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
 from app.repositories.journal_repository import JournalRepository
 from app.services.analysis_service import AnalysisService
 from app.services.storage_service import StorageService
@@ -40,44 +58,101 @@ class JournalPipeline:
         if not content_type.startswith("audio/"):
             raise ValueError("Uploaded file must be an audio format")
 
-        content = await audio_file.read()
+        max_bytes = self._settings.max_upload_mb * 1024 * 1024
+        content = await read_upload_with_limit(audio_file, max_bytes)
         if not content:
             raise ValueError("Uploaded audio file is empty")
 
-        max_bytes = self._settings.max_upload_mb * 1024 * 1024
-        if len(content) > max_bytes:
-            raise ValueError(f"Audio exceeds max size of {self._settings.max_upload_mb} MB")
-
-        audio_path, signed_url = await self._run_with_timeout(
-            "upload_audio",
-            self._storage.upload_audio,
+        return await self.run_pipeline(
             user_id=user_id,
-            filename=audio_file.filename,
-            content=content,
+            audio_bytes=content,
+            filename=audio_file.filename or "audio",
             content_type=content_type,
         )
 
-        transcript = await self._run_with_timeout(
-            "transcribe",
-            self._transcription.transcribe,
-            filename=audio_file.filename,
-            content=content,
-        )
-        analysis = await self._run_with_timeout("analyze", self._analysis.analyze, transcript)
+    async def run_pipeline(
+        self,
+        user_id: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str,
+        recording_id: str | None = None,
+        storage_path: str | None = None,
+        storage_signed_url: str | None = None,
+    ) -> JournalEntryResponse:
+        """Run transcribe → analyze → persist → streak for already-loaded audio bytes.
 
-        payload = {
-            "user_id": user_id,
-            "transcript": transcript,
-            "mood": analysis.mood,
-            "title": analysis.title,
-            "summary": analysis.summary,
-            "themes": analysis.themes,
-            "insights": analysis.insights,
-            "audio_path": audio_path,
-            "audio_signed_url": signed_url,
-            "prompt_version": self._settings.analysis_prompt_version,
-        }
-        saved = await self._run_with_timeout("create_entry", self._repository.create_entry, payload)
+        Used by both the synchronous API ingest path (after `process_upload` reads
+        the UploadFile) and the Celery worker (which downloads bytes from storage
+        by path before calling this).
+        """
+        uploaded_by_pipeline = storage_path is None
+        audio_path = None
+        try:
+            if uploaded_by_pipeline:
+                audio_path, signed_url = await self._run_with_timeout(
+                    "upload_audio",
+                    self._storage.upload_audio,
+                    user_id=user_id,
+                    filename=filename,
+                    content=audio_bytes,
+                    content_type=content_type,
+                )
+            else:
+                audio_path = storage_path
+                signed_url = storage_signed_url
+                if signed_url is None:
+                    signed_url = await self._run_with_timeout(
+                        "signed_url",
+                        self._storage.signed_url_for_path,
+                        storage_path,
+                    )
+
+            transcript = await self._run_with_timeout(
+                "transcribe",
+                self._transcription.transcribe,
+                filename=filename,
+                content=audio_bytes,
+            )
+            # Audio bytes are no longer needed after transcription — release the
+            # reference so the GC can reclaim the (potentially large) buffer while
+            # the rest of the pipeline (analysis, persist, streak) runs.
+            del audio_bytes
+
+            analysis = await self._run_with_timeout("analyze", self._analysis.analyze, transcript)
+
+            payload = {
+                "user_id": user_id,
+                "transcript": transcript,
+                "mood": analysis.mood,
+                "title": analysis.title,
+                "summary": analysis.summary,
+                "themes": analysis.themes,
+                "insights": analysis.insights,
+                "audio_path": audio_path,
+                "prompt_version": self._settings.analysis_prompt_version,
+            }
+            payload["id"] = recording_id if recording_id else str(uuid4())
+
+            saved = await self._run_with_timeout("create_entry", self._repository.create_entry, payload)
+        except Exception:
+            # If the pipeline uploaded the audio and a later stage failed,
+            # delete the orphaned blob so storage doesn't accumulate
+            # unreferenced files.
+            if uploaded_by_pipeline and audio_path:
+                try:
+                    await self._run_with_timeout(
+                        "cleanup_storage",
+                        self._storage.delete_audio,
+                        audio_path,
+                    )
+                except Exception:
+                    logger.warning(
+                        "storage_cleanup_failed",
+                        extra={"audio_path": audio_path, "user_id": user_id},
+                        exc_info=True,
+                    )
+            raise
 
         created_at_raw = saved.get("created_at")
         if created_at_raw:
@@ -125,3 +200,31 @@ class JournalPipeline:
                 extra={"stage": stage, "timeout_seconds": timeout_seconds},
             )
             raise PipelineTimeoutError(f"Pipeline stage '{stage}' timed out") from exc
+
+    def run_pipeline_sync(
+        self,
+        user_id: str,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str,
+        recording_id: str | None = None,
+        storage_path: str | None = None,
+        storage_signed_url: str | None = None,
+    ) -> JournalEntryResponse:
+        """Synchronous entry point for the Celery worker.
+
+        The pipeline core is async because the API request handler awaits it; the
+        worker process is synchronous (Celery tasks aren't coroutines), so this
+        wrapper drives the same `run_pipeline` coroutine from a fresh event loop.
+        """
+        return asyncio.run(
+            self.run_pipeline(
+                user_id=user_id,
+                audio_bytes=audio_bytes,
+                filename=filename,
+                content_type=content_type,
+                recording_id=recording_id,
+                storage_path=storage_path,
+                storage_signed_url=storage_signed_url,
+            )
+        )

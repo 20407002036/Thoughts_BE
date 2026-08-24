@@ -9,10 +9,9 @@ from fastapi.responses import JSONResponse
 from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.health import router as health_router
-from app.api.journals import entries_router, router as journals_router
+from app.api.journals import entries_router, recordings_router, router as journals_router
 from app.api.preferences import router as preferences_router
 from app.api.profile import router as profile_router
-from app.api.recordings import router as recordings_router
 from app.core.logging import configure_logging, get_correlation_id, set_correlation_id
 from app.core.settings import get_settings
 
@@ -46,11 +45,20 @@ def _error_payload(error: str, message: str) -> dict[str, str]:
 	}
 
 
-def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
+def _error_response(
+	status_code: int,
+	error: str,
+	message: str,
+	headers: dict[str, str] | None = None,
+) -> JSONResponse:
+	response_headers = {"X-Correlation-ID": get_correlation_id()}
+	if headers:
+		response_headers.update(headers)
+
 	return JSONResponse(
 		status_code=status_code,
 		content=_error_payload(error=error, message=message),
-		headers={"X-Correlation-ID": get_correlation_id()},
+		headers=response_headers,
 	)
 
 
@@ -133,7 +141,12 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 			"error_message": message,
 		},
 	)
-	return _error_response(status_code=exc.status_code, error=error, message=message)
+	return _error_response(
+		status_code=exc.status_code,
+		error=error,
+		message=message,
+		headers=exc.headers,
+	)
 
 
 @app.exception_handler(RequestValidationError)

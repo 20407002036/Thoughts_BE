@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     supabase_profiles_table: str = "user_profiles"
     signed_url_expiry_seconds: int = 3600
 
+    # Base64-encoded 32-byte AES-256 key for at-rest encryption of journal
+    # contents. None disables encryption (plaintext rows, local dev mode).
+    journal_encryption_key: Optional[str] = None
+
     groq_api_key: Optional[str] = None
     groq_whisper_model: str = "whisper-large-v3"
     groq_llm_model: str = "llama-3.3-70b-versatile"
@@ -38,6 +42,11 @@ class Settings(BaseSettings):
     cors_allow_headers: str = "*"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
+    ingest_async: bool = False
+    rate_limit_enabled: bool = True
+    rate_limit_ingest_per_minute: int = 5
+    rate_limit_ingest_per_hour: int = 30
+    redis_url: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 
