@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     analysis_prompt_version: str = "v1"
     cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
     cors_allow_credentials: bool = True
-    cors_allow_methods: str = "*"
-    cors_allow_headers: str = "*"
+    cors_allow_methods: str = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    cors_allow_headers: str = "Authorization,Content-Type,Accept,Origin"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
     ingest_async: bool = False

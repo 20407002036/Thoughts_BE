@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.profile import _build_profile_repository
+from app.core.rate_limit import rate_limit
 from app.core.security import AuthenticatedUser, get_current_user
 from app.models.schemas import ErrorResponse, UpdatePreferencesRequest, UserPreferences
 from app.repositories.profile_repository import ProfileRepository, ProfileRepositoryError
@@ -21,7 +22,9 @@ def get_profile_repository() -> ProfileRepository:
     },
 )
 def get_preferences(
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(
+        rate_limit(key_prefix="preferences_read", requests=30, window_seconds=60)
+    ),
     profile_repository: ProfileRepository = Depends(get_profile_repository),
 ) -> UserPreferences:
     try:
@@ -40,7 +43,9 @@ def get_preferences(
 )
 def update_preferences(
     payload: UpdatePreferencesRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(
+        rate_limit(key_prefix="preferences_write", requests=10, window_seconds=60)
+    ),
     profile_repository: ProfileRepository = Depends(get_profile_repository),
 ) -> UserPreferences:
     try:

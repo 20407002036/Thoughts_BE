@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.rate_limit import rate_limit
 from app.core.security import AuthenticatedUser, get_current_user
 from app.core.settings import Settings, get_settings
 from app.models.schemas import ErrorResponse, ProfileResponse, UpdateProfileRequest
@@ -36,7 +37,9 @@ def get_profile_service(settings: Settings = Depends(get_settings)) -> ProfileSe
     },
 )
 def get_profile(
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(
+        rate_limit(key_prefix="profile_read", requests=20, window_seconds=60)
+    ),
     profile_service: ProfileService = Depends(get_profile_service),
 ) -> ProfileResponse:
     try:
@@ -59,7 +62,9 @@ def get_profile(
 )
 def update_profile(
     payload: UpdateProfileRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(
+        rate_limit(key_prefix="profile_write", requests=10, window_seconds=60)
+    ),
     profile_service: ProfileService = Depends(get_profile_service),
 ) -> ProfileResponse:
     try:
