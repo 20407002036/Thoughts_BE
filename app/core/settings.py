@@ -40,6 +40,24 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = True
     cors_allow_methods: str = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
     cors_allow_headers: str = "Authorization,Content-Type,Accept,Origin"
+    # Firebase Cloud Messaging. Disabled by default so local development and
+    # CI keep working without a service account; PushService no-ops while
+    # firebase_enabled is false.
+    firebase_enabled: bool = False
+    firebase_project_id: Optional[str] = None
+    # Path to a service account JSON file, or the raw JSON inline (useful for
+    # Render env vars, where there is no filesystem to point at).
+    firebase_credentials_path: Optional[str] = None
+    firebase_credentials_json: Optional[str] = None
+    # When true, messages are validated and logged but never delivered. Keep
+    # true in staging so production devices are not disturbed.
+    firebase_dry_run: bool = False
+    firebase_devices_table: str = "device_tokens"
+    firebase_notification_log_table: str = "notification_log"
+    # FCM caps a single multicast at 500 tokens; send_each_for_multicast does
+    # not chunk for us, so we do it here.
+    fcm_batch_size: int = 500
+
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
     ingest_async: bool = False
@@ -73,6 +91,42 @@ class Settings(BaseSettings):
     @property
     def cors_headers(self) -> list[str]:
         return [header.strip() for header in self.cors_allow_headers.split(",") if header.strip()]
+
+    @property
+    def firebase_configured(self) -> bool:
+        """True when FCM is enabled and enough config is present to attempt a send.
+
+        Treats a bare FIREBASE_PROJECT_ID as configured even without an
+        explicit credential, because that is the shape used on platforms where
+        the service account is attached to the runtime and the Admin SDK
+        resolves it through Application Default Credentials. A false negative
+        here only affects the /ready report, never delivery.
+        """
+        return bool(
+            self.firebase_enabled
+            and (self.firebase_credentials_path or self.firebase_credentials_json or self.firebase_project_id)
+        )
+
+    @property
+    def firebase_credentials(self) -> Optional[dict]:
+        """Return the service account as a dict, or None for ADC resolution.
+
+        The Admin SDK already falls back to Application Default Credentials
+        (and the GCE metadata server) when handed no argument, so a project
+        deployed on a platform with attached credentials needs no config at
+        all. `firebase_credentials` returning None means "let the SDK decide".
+        """
+        if self.firebase_credentials_json:
+            import json
+
+            try:
+                parsed = json.loads(self.firebase_credentials_json)
+            except ValueError as exc:
+                raise ValueError("FIREBASE_CREDENTIALS_JSON is not valid JSON") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("FIREBASE_CREDENTIALS_JSON must be a JSON object")
+            return parsed
+        return None
 
 
 @lru_cache

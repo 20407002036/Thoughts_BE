@@ -19,4 +19,5 @@ def ready() -> dict[str, str | bool]:
         "auth_required": settings.auth_required,
         "supabase_configured": bool(settings.supabase_url and settings.supabase_service_role_key),
         "groq_configured": bool(settings.groq_api_key),
+        "firebase_configured": settings.firebase_configured,
     }

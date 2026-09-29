@@ -20,12 +20,14 @@ from app.models.schemas import (
     UnsupportedActionResponse,
     UpdateJournalEntryRequest,
 )
+from app.repositories.device_repository import DeviceRepository
 from app.repositories.journal_repository import JournalRepository, JournalRepositoryError
 from app.repositories.profile_repository import ProfileRepository
 from app.services.analysis_service import AnalysisError, AnalysisService
 from app.services.journal_service import JournalNotFoundError, JournalService, JournalValidationError
 from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError, read_upload_with_limit
 from app.services.live_transcription_service import LiveTranscriptionError, LiveTranscriptionService
+from app.services.push_service import PushService
 from app.services.storage_service import StorageService
 from app.services.transcription_service import TranscriptionError, TranscriptionService
 from app.services.streak_service import StreakService
@@ -54,6 +56,32 @@ def _build_streak_service() -> StreakService:
 
 
 @lru_cache
+def _build_device_repository() -> DeviceRepository:
+    return DeviceRepository(get_settings())
+
+
+@lru_cache
+def _build_push_service() -> PushService:
+    return PushService(
+        settings=get_settings(),
+        device_repository=_build_device_repository(),
+        profile_repository=_build_profile_repository(),
+    )
+
+
+def _dispatch_push(user_id: str, entry_id: str) -> None:
+    """Send the journal-ready push inline on the synchronous ingest path.
+
+    The async path (INGEST_ASYNC=true) hands this to a Celery task instead,
+    because the worker is already off the request path. In the sync path there
+    is no worker and no broker hop is worth taking, so PushService is called
+    directly. It never raises; the pipeline also wraps this stage in a
+    best-effort guard with the request timeout applied.
+    """
+    _build_push_service().notify_journal_ready(user_id=user_id, entry_id=entry_id)
+
+
+@lru_cache
 def _build_pipeline() -> JournalPipeline:
     settings = get_settings()
     return JournalPipeline(
@@ -63,6 +91,7 @@ def _build_pipeline() -> JournalPipeline:
         analysis_service=AnalysisService(settings),
         journal_repository=_build_journal_repository(),
         streak_service=_build_streak_service(),
+        push_dispatcher=_dispatch_push,
     )
 
 

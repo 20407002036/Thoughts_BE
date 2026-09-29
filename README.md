@@ -64,11 +64,22 @@ This service accepts journal audio uploads and runs a full pipeline:
 | MAX_UPLOAD_MB | no | Max upload size guardrail |
 | REQUEST_TIMEOUT_SECONDS | no | Request and pipeline stage timeout |
 | ANALYSIS_PROMPT_VERSION | no | Version marker stored per journal |
+| FIREBASE_ENABLED | no | Master switch for FCM push. `false` makes every push a no-op |
+| FIREBASE_PROJECT_ID | prod (if FCM on) | Firebase project the service account belongs to |
+| FIREBASE_CREDENTIALS_PATH | one of | Path to a service account JSON file |
+| FIREBASE_CREDENTIALS_JSON | one of | Same JSON inline, for platforms with no filesystem secret |
+| FIREBASE_DRY_RUN | no | Validate without delivering. Keep true in staging |
+| FIREBASE_DEVICES_TABLE | no | Device token table name |
+| FIREBASE_NOTIFICATION_LOG_TABLE | no | Notification audit table name |
+| FCM_BATCH_SIZE | no | Tokens per multicast call. FCM caps this at 500 |
 
 Notes:
 
 - Local fallback mode works without Supabase and Groq credentials.
 - For production-like behavior, set all Supabase and Groq values.
+- With no Firebase credentials the Admin SDK falls back to Application Default
+  Credentials, which is the right choice when the runtime already has the
+  service account attached.
 
 ## API contracts
 
@@ -96,7 +107,8 @@ Example response:
   "environment": "development",
   "auth_required": true,
   "supabase_configured": false,
-  "groq_configured": false
+  "groq_configured": false,
+  "firebase_configured": false
 }
 ```
 
@@ -435,7 +447,6 @@ Request body:
 ### GET /v1/dashboard
 
 Returns dashboard summary data. Prompt generation is not implemented yet, so the response deliberately returns `prompt: null` and `prompt_status: unavailable` instead of placeholder copy.
-
 Success response shape:
 
 ```json
@@ -448,6 +459,72 @@ Success response shape:
 }
 ```
 
+### POST /v1/devices
+
+Registers or refreshes this device's FCM registration token. Authenticated.
+
+Request:
+
+```json
+{
+  "token": "fcm-registration-token",
+  "platform": "android",
+  "app_version": "1.4.0"
+}
+```
+
+- `token` — required, 8–512 characters
+- `platform` — optional, one of `android`, `ios`, `web`. Defaults to `android`
+- `app_version` — optional, up to 32 characters
+
+Success response (`201`):
+
+```json
+{
+  "device_id": "0f6c1f2e-1f1e-4a9f-9d5f-2c7a1b8e4d31",
+  "platform": "android",
+  "registered": true
+}
+```
+
+Idempotent: re-registering the same token returns the same `device_id` and
+updates `platform` / `app_version`. A token previously registered to a
+different account is reassigned to the caller.
+
+### DELETE /v1/devices/{token}
+
+Stops push to this device. Scoped to the calling user, so one account cannot
+unregister another's device. Idempotent — an unknown token returns `200` with
+`removed: false` rather than `404`, because sign-out runs on clients that may
+never have registered.
+
+```json
+{
+  "success": true,
+  "removed": true
+}
+```
+
+### POST /v1/devices/test
+
+Sends a fixed diagnostic notification to the caller's own devices so the client
+can confirm end-to-end delivery without waiting for a real event. Rate limited
+to 3 calls per minute. The body is static and never carries journal content.
+
+```json
+{
+  "status": "sent",
+  "sent": 2,
+  "failed": 0,
+  "reason": null
+}
+```
+
+`status` is `sent`, `skipped`, or `failed`. `reason` explains a skip —
+`firebase_not_configured`, `notifications_disabled`, `no_active_devices`,
+`preference_check_failed` — or a `failed` status, where it is
+`token_lookup_failed` or `messaging_unavailable`.
+
 Error envelope for all handled failures:
 
 ```json
@@ -457,7 +534,6 @@ Error envelope for all handled failures:
   "correlation_id": "2cb5c6f8-3f15-4ece-a565-bfef4e4fb019"
 }
 ```
-
 Common error codes:
 
 - 400 bad_request
@@ -469,8 +545,74 @@ Common error codes:
 - 501 unsupported
 - 500 internal_error
 
-## cURL examples
+## Push notifications (FCM)
 
+Event-driven push over Firebase Cloud Messaging. There are no scheduled or
+recurring notifications: a push is only sent in response to something that
+already happened in the product.
+
+### What is sent
+
+One notification type today — `journal_ready`, dispatched after the ingest
+pipeline persists an entry:
+
+```json
+{
+  "notification": { "title": "Your journal is ready", "body": "Tap to read what you just recorded." },
+  "data": { "type": "journal_ready", "entry_id": "<entry-uuid>" }
+}
+```
+
+Notification bodies are fixed strings. Journal text is encrypted at rest and
+never leaves the database, so the client receives only the entry id in `data`
+and fetches the entry over the authenticated API on tap. Android and iOS are
+served by the same multicast: the message carries both an `AndroidConfig`
+(`priority: high`) and an `APNSConfig` (`apns-priority: 10`), and each
+registration records which platform it belongs to.
+
+### Opting in and out
+
+`notifications_enabled` in `user_profiles` is the single switch. It is
+read through the existing preferences repository, so `PATCH /v1/preferences`
+with `{"notifications_enabled": false}` stops all delivery with no change to
+device registrations.
+
+### Token lifecycle
+
+`POST /v1/devices` is idempotent and must be called on every app launch and
+again whenever the FCM SDK hands back a refreshed token. A token is unique
+across the whole table rather than unique per user: when a device changes
+accounts, re-registering reassigns the token and the previous account stops
+receiving push on that device.
+
+A token is deactivated when FCM reports it as permanently unusable
+(`UnregisteredError` — the app was uninstalled — or `SenderIdMismatchError` —
+the token belongs to another Firebase project). Server-side failures such as
+quota exhaustion, APNs certificate problems, or a 404 from the FCM endpoint
+deliberately **do not** deactivate tokens; pruning on those would silently
+disable push for every user during an outage.
+
+### Which path sends
+
+| Ingest mode | Behaviour |
+| --- | --- |
+| `INGEST_ASYNC=false` (local dev) | `PushService` is called directly from the pipeline |
+| `INGEST_ASYNC=true` (production) | Pipeline enqueues the `worker.send_push` Celery task |
+
+Either way the push stage is best-effort and bounded by
+`REQUEST_TIMEOUT_SECONDS`: a Firebase outage can never turn a saved journal
+into a failed ingest, because the entry is already persisted before the push
+stage runs.
+
+### Client integration
+
+1. Request notification permission.
+2. On token receipt or refresh, `POST /v1/devices` with the token and platform.
+3. On sign-out or when the user revokes permission, `DELETE /v1/devices/{token}`.
+4. On receiving a push, read `data.type`; for `journal_ready`, open
+   `GET /v1/entries/{data.entry_id}`.
+
+## cURL examples
 Health check:
 
 ```bash
@@ -546,6 +688,23 @@ curl -s -X POST "http://127.0.0.1:8000/v1/journals/ingest" \
   -F "audio=@./samples/journal.mp3;type=audio/mpeg"
 ```
 
+Register a device for push (no Firebase configuration needed — registration is
+stored regardless of whether delivery is enabled):
+
+```bash
+curl -s -X POST "http://127.0.0.1:8000/v1/devices" \
+  -H "Authorization: Bearer <supabase-access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"token":"fcm-registration-token","platform":"android","app_version":"1.4.0"}'
+```
+
+Send a test push to your own devices:
+
+```bash
+curl -s -X POST "http://127.0.0.1:8000/v1/devices/test" \
+  -H "Authorization: Bearer <supabase-access-token>"
+```
+
 ## Postman usage
 
 Import collection:
@@ -579,10 +738,36 @@ Set collection variables in Postman:
 2. Apply SQL migration:
 
    - supabase/migrations/001_init.sql
+   - supabase/migrations/002_journal_encryption.sql
+   - supabase/migrations/003_fcm_devices.sql (push notifications only)
 
 3. Create the storage bucket configured by SUPABASE_BUCKET.
 
 4. Verify authenticated flow by calling POST /v1/journals/ingest with a valid Supabase access token.
+
+## Firebase setup
+
+Push is off until `FIREBASE_ENABLED=true`, so this can be done after the first
+deploy. 003_fcm_devices.sql must be applied either way, since registrations are
+stored even while delivery is disabled.
+
+1. Create a Firebase project and add an Android app (package name must match
+   `applicationId`) and an iOS app (bundle id must match). For iOS, upload the
+   APNs key and enable the Push Notifications capability — without it iOS
+   deliveries will fail with an APNs auth error even though the request itself
+   is valid.
+
+2. Download a service account JSON (Project settings → Service accounts) and
+   point the backend at it with either `FIREBASE_CREDENTIALS_PATH` (a file on
+   disk) or `FIREBASE_CREDENTIALS_JSON` (the raw JSON, usually easier on
+   Render). With neither set, the Admin SDK uses Application Default
+   Credentials.
+
+3. Set `FIREBASE_ENABLED=true` and `FIREBASE_PROJECT_ID`. Leave
+   `FIREBASE_DRY_RUN=true` while testing so real devices are not disturbed, and
+   confirm delivery with `POST /v1/devices/test`.
+
+4. Check `GET /ready` reports `firebase_configured: true`.
 
 ## Verification
 
@@ -595,6 +780,12 @@ pytest -q
 Week 6 end-to-end verification test:
 
 - tests/test_week6_documentation_handoff.py
+
+Push notification tests:
+
+- tests/test_devices_api.py — registration, idempotency, token reassignment
+- tests/test_push_service.py — opt-out gating, batching, dead-token pruning
+- tests/test_push_dispatch.py — pipeline stage and the `worker.send_push` task
 
 ## Handoff notes
 

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -181,6 +182,30 @@ class UpdatePreferencesRequest(BaseModel):
     appearance_mode: str | None = None
     audio_quality: str | None = None
     language: str | None = None
+
+
+class RegisterDeviceRequest(BaseModel):
+    token: str = Field(min_length=8, max_length=512)
+    platform: Literal["android", "ios", "web"] = "android"
+    app_version: str | None = Field(default=None, max_length=32)
+
+
+class RegisterDeviceResponse(BaseModel):
+    device_id: str
+    platform: str
+    registered: bool = True
+
+
+class UnregisterDeviceResponse(BaseModel):
+    success: bool
+    removed: bool = False
+
+
+class TestPushResponse(BaseModel):
+    status: str
+    sent: int = 0
+    failed: int = 0
+    reason: str | None = None
 
 
 class Prompt(BaseModel):
