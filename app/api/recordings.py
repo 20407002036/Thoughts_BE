@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from app.api.journals import get_journal_service
+from app.api.journals import _build_journal_repository, _dispatch_push, get_journal_service
 from app.core.rate_limit import ingest_rate_limit
 from app.core.logging import get_correlation_id
 from app.core.security import AuthenticatedUser, get_current_user
@@ -18,7 +18,6 @@ from app.services.journal_pipeline import JournalPipeline, PipelineTimeoutError
 from app.services.journal_service import JournalNotFoundError, JournalService
 from app.services.storage_service import StorageService
 from app.services.transcription_service import TranscriptionError, TranscriptionService
-from app.api.journals import _build_journal_repository
 
 router = APIRouter(prefix="/v1/recordings", tags=["recordings"])
 logger = logging.getLogger(__name__)
@@ -33,6 +32,7 @@ def _build_recording_pipeline() -> JournalPipeline:
         transcription_service=TranscriptionService(settings),
         analysis_service=AnalysisService(settings),
         journal_repository=_build_journal_repository(),
+        push_dispatcher=_dispatch_push,
     )
 
 

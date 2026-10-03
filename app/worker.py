@@ -1,13 +1,16 @@
 import logging
+from functools import partial
 from uuid import uuid4
 
 from celery import Celery
 
 from app.core.settings import get_settings
+from app.repositories.device_repository import DeviceRepository
 from app.repositories.journal_repository import JournalRepository
 from app.repositories.profile_repository import ProfileRepository
 from app.services.analysis_service import AnalysisService
 from app.services.journal_pipeline import JournalPipeline
+from app.services.push_service import KIND_JOURNAL_READY, PushService
 from app.services.storage_service import StorageService
 from app.services.streak_service import StreakService
 from app.services.transcription_service import TranscriptionService
@@ -42,7 +45,7 @@ celery_app.conf.beat_schedule = {
 }
 
 
-def _build_pipeline(user_id: str) -> JournalPipeline:
+def _build_pipeline(user_id: str, correlation_id: str | None = None) -> JournalPipeline:
     """Construct a JournalPipeline with worker-local dependencies."""
     settings_local = get_settings()
     return JournalPipeline(
@@ -52,6 +55,39 @@ def _build_pipeline(user_id: str) -> JournalPipeline:
         analysis_service=AnalysisService(settings_local),
         journal_repository=JournalRepository(settings_local),
         streak_service=StreakService(ProfileRepository(settings_local)),
+        push_dispatcher=partial(_enqueue_push, correlation_id=correlation_id),
+    )
+
+
+def _enqueue_push(user_id: str, entry_id: str, correlation_id: str | None = None) -> None:
+    """Hand the journal-ready push to a dedicated task.
+
+    Runs inside the pipeline's best-effort stage. A broker problem here must
+    not fail the ingest, so the enqueue is wrapped rather than allowed to
+    propagate — the journal is already saved at this point and a retry would
+    duplicate it.
+    """
+    try:
+        send_push.delay(
+            user_id=user_id,
+            kind=KIND_JOURNAL_READY,
+            entry_id=entry_id,
+            correlation_id=correlation_id,
+        )
+    except Exception:
+        logger.warning(
+            "send_push_enqueue_failed",
+            extra={"user_id": user_id, "entry_id": entry_id, "correlation_id": correlation_id},
+            exc_info=True,
+        )
+
+
+def _build_push_service() -> PushService:
+    settings_local = get_settings()
+    return PushService(
+        settings=settings_local,
+        device_repository=DeviceRepository(settings_local),
+        profile_repository=ProfileRepository(settings_local),
     )
 
 
@@ -105,7 +141,7 @@ def process_journal_upload(
         logger.exception("process_journal_upload_download_failed", extra=log_extra)
         raise self.retry(exc=exc) from exc
 
-    pipeline = _build_pipeline(user_id)
+    pipeline = _build_pipeline(user_id, correlation_id)
 
     try:
         result = pipeline.run_pipeline_sync(
@@ -133,6 +169,52 @@ def process_journal_upload(
         "recording_id": recording_id or result.id,
         "entry_id": result.id,
     }
+
+
+@celery_app.task(name="worker.send_push", bind=True, max_retries=2, default_retry_delay=30)
+def send_push(
+    self,
+    user_id: str,
+    kind: str,
+    entry_id: str | None = None,
+    correlation_id: str | None = None,
+) -> dict:
+    """
+    Deliver an event-driven push notification to a user's registered devices.
+
+    Event-driven only: there is no scheduled or recurring notification here, so
+    this task is enqueued by the product event that just happened.
+
+    Notification bodies never contain journal content — the client receives the
+    entry id in the data payload and fetches the entry over the authenticated
+    API on tap.
+
+    Args:
+        user_id: Recipient. Resolved from the event, never from client input.
+        kind: Notification kind, e.g. KIND_JOURNAL_READY.
+        entry_id: Journal entry the notification refers to, when there is one.
+        correlation_id: Propagated from the originating request so worker logs
+            stay joinable with API logs.
+    """
+    log_extra = {"user_id": user_id, "kind": kind, "entry_id": entry_id, "correlation_id": correlation_id}
+    logger.info("send_push_started", extra=log_extra)
+
+    if kind != KIND_JOURNAL_READY or not entry_id:
+        logger.warning("send_push_unknown_kind", extra=log_extra)
+        return {"status": "skipped", "reason": "unknown_kind"}
+
+    try:
+        push_service = _build_push_service()
+        result = push_service.notify_journal_ready(user_id=user_id, entry_id=entry_id)
+    except Exception as exc:
+        # Only transport-level failures reach here; PushService already absorbs
+        # per-message errors. Retrying is worthwhile because Firebase auth
+        # failures are usually a transient service-account issue.
+        logger.exception("send_push_failed", extra=log_extra)
+        raise self.retry(exc=exc)
+
+    logger.info("send_push_completed", extra={**log_extra, **result.as_dict()})
+    return result.as_dict()
 
 
 @celery_app.task(name="worker.reset_streaks")

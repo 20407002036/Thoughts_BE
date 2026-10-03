@@ -76,12 +76,12 @@ async def check_rate_limit(
         results = await pipe.execute()
         count = int(results[0])
     except (redis_async.RedisError, ConnectionError, OSError, RuntimeError) as exc:
-        logger.warning(
+        logger.error(
             "rate_limit_redis_unavailable",
             extra={"key_prefix": key_prefix, "user_id": user_id, "error": str(exc)},
             exc_info=True,
         )
-        return True, 0
+        return False, 0
 
     if count > limit:
         retry_after = window_seconds - (int(time.time()) % window_seconds)
@@ -173,7 +173,11 @@ def ingest_rate_limit() -> Callable:
         settings: Settings = Depends(get_settings),
     ) -> AuthenticatedUser:
         if not settings.rate_limit_enabled:
-            return current_user
+            logger.warning("rate_limiter_disabled_manually")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limiter temporarily disabled for maintenance",
+            )
 
         redis_client = _get_redis_client(settings.redis_url, id(asyncio.get_running_loop()))
 

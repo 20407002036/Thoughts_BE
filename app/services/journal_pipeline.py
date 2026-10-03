@@ -1,12 +1,19 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
+from typing import Callable
 from uuid import uuid4
 
 from fastapi import UploadFile
 
 from app.core.settings import Settings
 from app.models.schemas import JournalEntryResponse
+
+# Fire-and-forget hook invoked as (user_id=..., entry_id=...) once the entry is
+# persisted. The API path sends through PushService directly; the worker path
+# enqueues a Celery task. Implementations must not raise — the pipeline already
+# treats this stage as best-effort.
+PushDispatcher = Callable[..., None]
 
 _READ_CHUNK_SIZE = 64 * 1024  # 64 KB
 
@@ -45,6 +52,7 @@ class JournalPipeline:
         analysis_service: AnalysisService,
         journal_repository: JournalRepository,
         streak_service: object | None = None,
+        push_dispatcher: PushDispatcher | None = None,
     ) -> None:
         self._settings = settings
         self._storage = storage_service
@@ -52,6 +60,7 @@ class JournalPipeline:
         self._analysis = analysis_service
         self._repository = journal_repository
         self._streak_service = streak_service
+        self._push_dispatcher = push_dispatcher
 
     async def process_upload(self, user_id: str, audio_file: UploadFile) -> JournalEntryResponse:
         content_type = audio_file.content_type or ""
@@ -175,6 +184,24 @@ class JournalPipeline:
                 extra={"user_id": user_id, "journal_id": str(saved.get("id", ""))},
                 exc_info=True,
             )
+
+        # Event-driven push telling the user their entry is ready. Best-effort
+        # for the same reason the streak update is: the journal is already
+        # saved, so a Firebase problem must not surface as a failed request.
+        if self._push_dispatcher is not None:
+            try:
+                await self._run_with_timeout(
+                    "dispatch_push",
+                    self._push_dispatcher,
+                    user_id=user_id,
+                    entry_id=str(saved.get("id", "")),
+                )
+            except Exception:
+                logger.warning(
+                    "push_dispatch_failed",
+                    extra={"user_id": user_id, "journal_id": str(saved.get("id", ""))},
+                    exc_info=True,
+                )
 
         return JournalEntryResponse(
             id=str(saved.get("id", "")),

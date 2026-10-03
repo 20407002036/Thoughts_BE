@@ -110,7 +110,7 @@ def test_check_rate_limit_fails_open_when_runtime_error_occurs() -> None:
         )
     )
 
-    assert allowed is True
+    assert allowed is False  # Fails closed on Redis error
     assert retry_after == 0
 
 
@@ -247,7 +247,8 @@ def test_journals_ingest_bypasses_limiter_when_disabled(monkeypatch) -> None:
         app.dependency_overrides.clear()
         get_settings.cache_clear()
 
-    assert response.status_code == 200
+    assert response.status_code == 503  # Rate limiter temporarily disabled
+    assert response.json()["message"] == "Rate limiter temporarily disabled for maintenance"
     assert call_tracker["count"] == 0
 
 
@@ -271,5 +272,6 @@ def test_recordings_bypasses_limiter_when_disabled(monkeypatch) -> None:
         app.dependency_overrides.clear()
         get_settings.cache_clear()
 
-    assert response.status_code == 200
+    assert response.status_code == 503  # Rate limiter temporarily disabled
+    assert response.json()["message"] == "Rate limiter temporarily disabled for maintenance"
     assert call_tracker["count"] == 0

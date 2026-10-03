@@ -20,3 +20,4 @@ def test_ready() -> None:
     assert payload["status"] == "ready"
     assert "supabase_configured" in payload
     assert "groq_configured" in payload
+    assert "firebase_configured" in payload

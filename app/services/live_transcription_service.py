@@ -2,7 +2,13 @@ import json
 import logging
 from pathlib import Path
 
-from vosk import KaldiRecognizer, Model
+try:
+    from vosk import KaldiRecognizer, Model
+    _VOSK_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _VOSK_AVAILABLE = False
+    KaldiRecognizer = None  # type: ignore
+    Model = None  # type: ignore
 
 from app.core.settings import Settings
 
@@ -21,8 +27,8 @@ class LiveTranscriptionService:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._model: Model | None = None
-        self._recognizer: KaldiRecognizer | None = None
+        self._model = None
+        self._recognizer = None
         self._initialized = False
 
         if settings.vosk_model_path:

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.journals import get_journal_service
 from app.api.profile import get_profile_service
+from app.core.rate_limit import rate_limit
 from app.core.security import AuthenticatedUser, get_current_user
 from app.models.schemas import DashboardSummary, ErrorResponse
 from app.repositories.journal_repository import JournalRepositoryError
@@ -21,7 +22,9 @@ router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
     },
 )
 def get_dashboard(
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(
+        rate_limit(key_prefix="dashboard_read", requests=30, window_seconds=60)
+    ),
     journal_service: JournalService = Depends(get_journal_service),
     profile_service: ProfileService = Depends(get_profile_service),
 ) -> DashboardSummary:
